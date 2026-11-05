@@ -49,17 +49,14 @@ class GroupInfoScreen extends ConsumerWidget {
                 if (isAdmin)
                   AdminControlsSection(group: group, groupId: groupId),
                 // Members list
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Members',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Row(
+                    children: [
+                      const Text('Members', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 8),
+                      Text('(${group.members.length})', style: const TextStyle(fontSize: 16, color: Colors.grey, fontWeight: FontWeight.w600)),
+                    ],
                   ),
                 ),
                 MembersListSection(

@@ -1,12 +1,10 @@
-
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:yoked_in/chat/message_model.dart';
 import 'package:yoked_in/chat/model.dart';
 import 'package:yoked_in/chat/user_model.dart';
+import 'package:yoked_in/services/cloudflare_media_service.dart';
 
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -531,103 +529,247 @@ class ChatService {
   }
 
   // -------------------- IMAGE MESSAGES --------------------
-  Future<String> uploadImage(File imageFile, String chatId) async {
-    try {
-      final fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_${currentUserId}.jpg';
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('chat_images')
-          .child(chatId)
-          .child(fileName);
+ 
+  // -------------------- CHAT MEDIA MESSAGES --------------------
 
-      final uploadTask = storageRef.putFile(imageFile);
-      final snapshot = await uploadTask.whenComplete(() {});
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-      print("sizeofdocs4 ${downloadUrl.length}");
-      print("sizeofdocs5 ${uploadTask}");
-      return downloadUrl;
+  /// Uploads an image to Cloudflare R2.
+  /// Retained so existing image-upload calls continue working.
+  Future<String> uploadImage(XFile imageFile, String chatId) async {
+    try {
+      final result = await CloudflareMediaService.instance.uploadFile(
+        imageFile,
+        purpose: 'chat',
+        chatId: chatId,
+        category: 'image',
+      );
+
+      final imageUrl = result['url'];
+
+      if (imageUrl is! String || imageUrl.isEmpty) {
+        throw Exception('Cloudflare did not return an image URL.');
+      }
+
+      return imageUrl;
     } catch (e) {
-      print('Error uploading image: $e');
-      return '';
+      print('Error uploading image to Cloudflare R2: $e');
+      return 'UPLOAD_ERROR: $e';
     }
   }
 
-  Future<String> sendImageMessage({
+  /// Creates a private-chat media message after upload.
+  ///
+  /// Only picture messages are supported.
+  Future<String> sendMediaMessage({
     required String chatId,
-    required String imageUrl,
+    required String mediaUrl,
+    required String mediaCategory,
     String? caption,
+    String? mediaKey,
+    String? fileName,
+    String? contentType,
+    int? fileSize,
+    int? expiresAtMs,
   }) async {
     try {
-      final currentUser = _auth.currentUser!;
-      final messageId = _firestore.collection('messages').doc().id;
+      final currentUser = _auth.currentUser;
 
-      final batch = _firestore.batch();
+      if (currentUser == null) {
+        return 'You must sign in before sending media.';
+      }
 
-      // Create image message
-      batch.set(_firestore.collection('messages').doc(messageId), {
-        'messageId': messageId,
-        'senderId': currentUserId,
-        'senderName': currentUser.displayName ?? 'User',
-        'message': caption ?? '', // Caption text
-        'imageUrl': imageUrl,
-        'timestamp': FieldValue.serverTimestamp(),
-        'readBy': {},
-        'chatId': chatId,
-        'type': 'image',
-      });
+      const supportedCategories = {'image'};
 
-      // Update chat with last message
-      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
+      if (!supportedCategories.contains(mediaCategory)) {
+        return 'Unsupported media category.';
+      }
+
+      if (mediaUrl.trim().isEmpty) {
+        return 'The media URL is empty.';
+      }
+
+      final chatRef = _firestore.collection('chats').doc(chatId);
+      final chatDoc = await chatRef.get();
+
       if (!chatDoc.exists) {
         return 'Chat not found';
       }
 
       final chatData = chatDoc.data()!;
-      // print("sizeofdocs6 ${chatData.length}");
-      final participants = List<String>.from(chatData['participants']);
-      final otherUserId = participants.firstWhere((id) => id != currentUserId);
+      final participants = List<String>.from(
+        chatData['participants'] ?? [],
+      );
 
-      batch.update(_firestore.collection('chats').doc(chatId), {
-        // 'lastMessage': caption?.isNotEmpty == true ? caption : '📷 Photo',
-        'lastMessage': (caption != null && caption.trim().isNotEmpty)
-            ? caption
-            : '📷 Photo',
+      if (!participants.contains(currentUser.uid)) {
+        return 'You are not a participant in this chat.';
+      }
+
+      final otherUserId = participants.firstWhere(
+        (id) => id != currentUser.uid,
+        orElse: () => '',
+      );
+
+      if (otherUserId.isEmpty) {
+        return 'The other chat participant could not be found.';
+      }
+
+      final messageId = _firestore.collection('messages').doc().id;
+      final messageRef = _firestore.collection('messages').doc(messageId);
+
+      final trimmedCaption = caption?.trim() ?? '';
+      const defaultLabels = <String, String>{'image': '📷 Photo'};
+
+      final lastMessage = trimmedCaption.isNotEmpty
+          ? trimmedCaption
+          : defaultLabels[mediaCategory]!;
+
+      final messageData = <String, dynamic>{
+        'messageId': messageId,
+        'senderId': currentUser.uid,
+        'senderName': currentUser.displayName ?? 'User',
+        'message': caption ?? '',
+        'mediaUrl': mediaUrl,
+        'timestamp': FieldValue.serverTimestamp(),
+        'readBy': <String, dynamic>{},
+        'chatId': chatId,
+        'type': mediaCategory,
+        'mediaCategory': mediaCategory,
+      };
+
+      // Keep imageUrl populated for compatibility with existing image UI.
+      if (mediaCategory == 'image') {
+        messageData['imageUrl'] = mediaUrl;
+      }
+
+      if (mediaKey != null && mediaKey.isNotEmpty) {
+        messageData['mediaKey'] = mediaKey;
+      }
+
+      if (fileName != null && fileName.isNotEmpty) {
+        messageData['fileName'] = fileName;
+      }
+
+      if (contentType != null && contentType.isNotEmpty) {
+        messageData['contentType'] = contentType;
+      }
+
+      if (fileSize != null) {
+        messageData['fileSize'] = fileSize;
+      }
+
+      if (expiresAtMs != null) {
+        messageData['expiresAtMs'] = expiresAtMs;
+      }
+
+      final batch = _firestore.batch();
+
+      batch.set(messageRef, messageData);
+
+      batch.update(chatRef, {
+        'lastMessage': lastMessage,
         'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastSenderId': currentUserId,
+        'lastSenderId': currentUser.uid,
         'unreadCount.$otherUserId': FieldValue.increment(1),
-        'unreadCount.$currentUserId': 0,
+        'unreadCount.${currentUser.uid}': 0,
       });
-      // print("sizeofdocs7 ${batch}");
+
       await batch.commit();
-      // For notification
+
       await _sendMessageNotification(
         chatId: chatId,
-        message: caption?.trim().isNotEmpty == true ? caption! : '📷 Photo',
+        message: lastMessage,
         otherUserId: otherUserId,
       );
+
       return 'success';
     } catch (e) {
-      print('Error sending image message: $e');
+      print('Error sending private-chat media: $e');
       return e.toString();
     }
   }
 
-  Future<String> sendImageWithUpload({
+  /// Uploads a selected file to R2 and then creates its chat message.
+  Future<String> sendMediaWithUpload({
     required String chatId,
-    required File imageFile,
+    required XFile file,
+    required String mediaCategory,
     String? caption,
   }) async {
-    // Upload image first
-    final imageUrl = await uploadImage(imageFile, chatId);
-    if (imageUrl.isEmpty) {
-      return 'Failed to upload image';
-    }
+    try {
+      final result = await CloudflareMediaService.instance.uploadFile(
+        file,
+        purpose: 'chat',
+        chatId: chatId,
+        category: mediaCategory,
+      );
 
-    // Send image message
-    return await sendImageMessage(
+      final mediaUrl = result['url'];
+      final mediaKey = result['key'];
+
+      if (mediaUrl is! String || mediaUrl.isEmpty) {
+        return 'Cloudflare did not return a media URL.';
+      }
+
+      if (mediaKey is! String || mediaKey.isEmpty) {
+        return 'Cloudflare did not return a media storage key.';
+      }
+
+      final rawExpiry = result['expiresAtMs'];
+      final expiresAtMs = rawExpiry is num
+          ? rawExpiry.toInt()
+          : null;
+
+      return await sendMediaMessage(
+        chatId: chatId,
+        mediaUrl: mediaUrl,
+        mediaCategory: mediaCategory,
+        caption: caption,
+        mediaKey: mediaKey,
+        fileName: file.name,
+        contentType: file.mimeType,
+        fileSize: await file.length(),
+        expiresAtMs: expiresAtMs,
+      );
+    } catch (e) {
+      print('Error uploading or sending private-chat media: $e');
+      return e.toString();
+    }
+  }
+
+  /// Backward-compatible image-message method.
+  Future<String> sendImageMessage({
+    required String chatId,
+    required String imageUrl,
+    String? caption,
+    String? mediaKey,
+    String? fileName,
+    String? contentType,
+    int? fileSize,
+    int? expiresAtMs,
+    String mediaCategory = 'image',
+  }) async {
+    return sendMediaMessage(
       chatId: chatId,
-      imageUrl: imageUrl,
+      mediaUrl: imageUrl,
+      mediaCategory: mediaCategory,
+      caption: caption,
+      mediaKey: mediaKey,
+      fileName: fileName,
+      contentType: contentType,
+      fileSize: fileSize,
+      expiresAtMs: expiresAtMs,
+    );
+  }
+
+  /// Backward-compatible image-upload method used by chat_screen.dart.
+  Future<String> sendImageWithUpload({
+    required String chatId,
+    required XFile imageFile,
+    String? caption,
+  }) async {
+    return sendMediaWithUpload(
+      chatId: chatId,
+      file: imageFile,
+      mediaCategory: 'image',
       caption: caption,
     );
   }

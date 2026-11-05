@@ -1,4 +1,5 @@
-/// Profile state model
+
+/// Profile state model.
 class ProfileState {
   final String? photoUrl;
   final String? name;
@@ -6,9 +7,9 @@ class ProfileState {
   final bool isLoading;
   final bool isUploading;
   final DateTime? createdAt;
-  final String? userId; // Add userId to track current user
+  final String? userId;
 
-  ProfileState({
+  const ProfileState({
     this.photoUrl,
     this.name,
     this.createdAt,
@@ -26,15 +27,20 @@ class ProfileState {
     bool? isLoading,
     bool? isUploading,
     String? userId,
+    bool clearPhotoUrl = false,
+    bool clearName = false,
+    bool clearEmail = false,
+    bool clearCreatedAt = false,
+    bool clearUserId = false,
   }) {
     return ProfileState(
-      photoUrl: photoUrl ?? this.photoUrl,
-      name: name ?? this.name,
-      createdAt: createdAt ?? this.createdAt,
-      email: email ?? this.email,
+      photoUrl: clearPhotoUrl ? null : photoUrl ?? this.photoUrl,
+      name: clearName ? null : name ?? this.name,
+      email: clearEmail ? null : email ?? this.email,
+      createdAt: clearCreatedAt ? null : createdAt ?? this.createdAt,
       isLoading: isLoading ?? this.isLoading,
       isUploading: isUploading ?? this.isUploading,
-      userId: userId ?? this.userId,
+      userId: clearUserId ? null : userId ?? this.userId,
     );
   }
 }

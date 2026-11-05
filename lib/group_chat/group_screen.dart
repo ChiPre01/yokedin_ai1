@@ -1,4 +1,3 @@
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +5,7 @@ import 'package:yoked_in/group_chat/create_group_screen.dart';
 import 'package:yoked_in/group_chat/group_chat_screen.dart';
 import 'package:yoked_in/helper/time_format.dart';
 import 'package:yoked_in/provider/group_chat_provider.dart';
+import 'package:yoked_in/widgets/user_avatar.dart';
 
 class GroupScreen extends ConsumerStatefulWidget {
   const GroupScreen({super.key});
@@ -97,14 +97,10 @@ class _GroupScreenState extends ConsumerState<GroupScreen> {
                 final hasUnread = unreadCount > 0;
 
                 return ListTile(
-                  leading: CircleAvatar(
+                  leading: UserAvatar(
+                    photoUrl: group.groupPhotoURL,
                     radius: 28,
-                    backgroundImage: group.groupPhotoURL != null
-                        ? NetworkImage(group.groupPhotoURL!)
-                        : null,
-                    child: group.groupPhotoURL == null
-                        ? const Icon(Icons.group)
-                        : null,
+                    fallbackIcon: Icons.group,
                   ),
                   title: Text(
                     group.groupName,
@@ -120,9 +116,8 @@ class _GroupScreenState extends ConsumerState<GroupScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: hasUnread ? Colors.black : Colors.grey,
-                      fontWeight: hasUnread
-                          ? FontWeight.w500
-                          : FontWeight.normal,
+                      fontWeight:
+                          hasUnread ? FontWeight.w500 : FontWeight.normal,
                     ),
                   ),
                   trailing: Column(

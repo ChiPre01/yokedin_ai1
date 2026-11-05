@@ -1,11 +1,9 @@
-
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/provider/group_chat_provider.dart';
+import 'package:yoked_in/widgets/user_avatar.dart';
 import 'package:yoked_in/widgets/utilis.dart';
 
 class GroupIdentity extends ConsumerWidget {
@@ -25,19 +23,14 @@ class GroupIdentity extends ConsumerWidget {
     return Column(
       children: [
         GestureDetector(
-          onTap: canEdit
-              ? () => _updateGroupPhoto(context, ref, groupId)
-              : null,
+          onTap:
+              canEdit ? () => _updateGroupPhoto(context, ref, groupId) : null,
           child: Stack(
             children: [
-              CircleAvatar(
+              UserAvatar(
+                photoUrl: group.groupPhotoURL,
                 radius: 60,
-                backgroundImage: group.groupPhotoURL != null
-                    ? NetworkImage(group.groupPhotoURL!)
-                    : null,
-                child: group.groupPhotoURL == null
-                    ? const Icon(Icons.group, size: 60)
-                    : null,
+                fallbackIcon: Icons.group,
               ),
               if (canEdit)
                 const Positioned(
@@ -99,7 +92,7 @@ class GroupIdentity extends ConsumerWidget {
       try {
         final imageUrl = await ref
             .read(groupChatServiceProvider)
-            .uploadImage(File(pickedFile.path), groupId);
+            .uploadImage(pickedFile, groupId);
 
         if (imageUrl.isNotEmpty) {
           await ref

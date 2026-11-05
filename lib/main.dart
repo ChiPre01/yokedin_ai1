@@ -9,7 +9,6 @@ import 'package:yoked_in/auth/notification_service.dart';
 import 'package:yoked_in/auth/user_login_screen.dart';
 import 'package:yoked_in/auth/zego_secret_key.dart';
 import 'package:yoked_in/firebase_options.dart';
-import 'package:yoked_in/provider/chat_provider.dart' as chat;
 import 'package:yoked_in/provider/provider.dart' as auth;
 import 'package:yoked_in/wrapper_state/authentication_wrapper.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
@@ -25,26 +24,9 @@ void main() async {
   await NotificationService().requestPermissions();
   NotificationService().initTokenListener();
 
-  //  Request other permissions initializing Zego
+  // Request camera, microphone, and notification permissions for call support.
   await requestPermissions();
-  final user = FirebaseAuth.instance.currentUser;
-  final String userID = user?.uid ?? "0123";
-  final String userName = user?.displayName ?? "Guest";
-
   ZegoUIKitPrebuiltCallInvitationService().setNavigatorKey(navigatorKey);
-  // Initialize Zego invitation service
-  await ZegoUIKitPrebuiltCallInvitationService()
-      .init(
-        appID: ZegoConfig.appID,
-        appSign: ZegoConfig.appSign,
-        userID: userID,
-        userName: userName,
-        plugins: [ZegoUIKitSignalingPlugin()],
-        invitationEvents: ZegoUIKitPrebuiltCallInvitationEvents(),
-      )
-      .catchError((error) {
-        print("Zego initialization error: $error");
-      });
 
   runApp(ProviderScope(child: MyApp(navigatorKey: navigatorKey)));
 }
@@ -73,17 +55,55 @@ class MyApp extends ConsumerStatefulWidget {
 }
 
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
+  StreamSubscription<User?>? _zegoAuthSubscription;
+  Future<void> _zegoSessionQueue = Future<void>.value();
+  String? _zegoUserId;
+
   @override
   void initState() {
     super.initState();
     // Add observer to detect app lifecycle changes
     WidgetsBinding.instance.addObserver(this);
+    _zegoAuthSubscription =
+        FirebaseAuth.instance.authStateChanges().listen((user) {
+      _zegoSessionQueue = _zegoSessionQueue.then(
+        (_) => _syncZegoSession(user),
+      );
+    });
     // Validate user on app start
     _validateUserOnStart();
   }
 
+  Future<void> _syncZegoSession(User? user) async {
+    final callService = ZegoUIKitPrebuiltCallInvitationService();
+    if (user?.uid == _zegoUserId) return;
+
+    try {
+      if (_zegoUserId != null) {
+        await callService.uninit();
+        _zegoUserId = null;
+      }
+
+      if (user == null) return;
+
+      await callService.init(
+        appID: ZegoConfig.appID,
+        appSign: ZegoConfig.appSign,
+        userID: user.uid,
+        userName: user.displayName ?? 'User',
+        plugins: [ZegoUIKitSignalingPlugin()],
+        invitationEvents: ZegoUIKitPrebuiltCallInvitationEvents(),
+      );
+      _zegoUserId = user.uid;
+    } catch (error, stackTrace) {
+      debugPrint('Zego session update error: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   @override
   void dispose() {
+    _zegoAuthSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

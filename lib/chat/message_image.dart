@@ -1,12 +1,17 @@
-
 import 'package:flutter/material.dart';
+
 import 'package:yoked_in/chat/chat_screen.dart';
 import 'package:yoked_in/chat/message_model.dart';
 import 'package:yoked_in/helper/current_time.dart';
 import 'package:yoked_in/helper/time_format.dart';
+import 'package:yoked_in/widgets/cloudflare_media_image.dart';
 import 'package:yoked_in/widgets/full_screen_image.dart';
 import 'package:yoked_in/widgets/message_status_icon.dart';
+import 'package:yoked_in/widgets/user_avatar.dart';
 
+/// Displays ordinary text and picture messages in a private chat.
+/// Video, audio, voice-note, and document attachments are intentionally not
+/// rendered; private-chat media is limited to pictures.
 class MessageAndImageDisplay extends StatelessWidget {
   const MessageAndImageDisplay({
     super.key,
@@ -19,31 +24,63 @@ class MessageAndImageDisplay extends StatelessWidget {
   final ChatScreen widget;
   final MessageModel message;
 
+  String? get _imageUrl {
+    try {
+      final dynamic mediaCategory = (message as dynamic).mediaCategory;
+      if (mediaCategory is String && mediaCategory.toLowerCase() != 'image') {
+        return null;
+      }
+    } catch (_) {
+      // Older message models may not have mediaCategory.
+    }
+
+    try {
+      final dynamic mediaUrl = (message as dynamic).mediaUrl;
+      if (mediaUrl is String && mediaUrl.trim().isNotEmpty) {
+        return mediaUrl.trim();
+      }
+    } catch (_) {
+      // Older picture messages use imageUrl.
+    }
+
+    final url = message.imageUrl;
+    if (url != null && url.trim().isNotEmpty) return url.trim();
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasImage = message.imageUrl != null && message.imageUrl!.isNotEmpty;
-    final hasText = message.message.isNotEmpty;
+    final category = message.type.toLowerCase();
+    const unsupportedMediaTypes = {
+      'video',
+      'voice',
+      'voice_note',
+      'voicenote',
+      'audio',
+      'document',
+      'file',
+    };
+    if (unsupportedMediaTypes.contains(category)) {
+      return const SizedBox.shrink();
+    }
+
+    final imageUrl = _imageUrl;
+    final hasImage = imageUrl != null;
+    final text = message.message;
+    final hasText = text.trim().isNotEmpty;
     final hasBoth = hasImage && hasText;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       child: Row(
-        mainAxisAlignment: isMe
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) ...[
-            CircleAvatar(
+            UserAvatar(
+              photoUrl: widget.otherUser.photoURL,
               radius: 16,
-              backgroundImage: widget.otherUser.photoURL != null
-                  ? NetworkImage(widget.otherUser.photoURL!)
-                  : null,
-              child: widget.otherUser.photoURL == null
-                  ? Text(
-                      widget.otherUser.name[0].toUpperCase(),
-                      style: const TextStyle(fontSize: 12),
-                    )
-                  : null,
+              fallbackIcon: Icons.person,
             ),
             const SizedBox(width: 8),
           ],
@@ -53,162 +90,73 @@ class MessageAndImageDisplay extends StatelessWidget {
                 maxWidth: MediaQuery.of(context).size.width * 0.7,
               ),
               padding: EdgeInsets.symmetric(
-                horizontal: message.type == 'image' ? 8 : 10,
-                vertical: message.type == 'image' ? 4 : 10,
+                horizontal: hasImage ? 8 : 10,
+                vertical: hasImage ? 4 : 10,
               ),
               decoration: BoxDecoration(
-                color: isMe && message.type != 'image'
-                    ? Colors.blue
-                    : message.type == 'image'
+                color: hasImage
                     ? Colors.white
-                    : Colors.grey[300],
+                    : isMe
+                        ? Colors.blue
+                        : Colors.grey[300],
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Image display
-                  if (message.type == 'image' && message.imageUrl != null) ...[
-                    // ClipRRect(
-                    //   borderRadius: BorderRadius.circular(16),
-                    //   child: GestureDetector(
-                    //     onTap: () =>
-                    //         showFullScreenImage(message.imageUrl!, context),
-                    //     child: Container(
-                    //       constraints: const BoxConstraints(
-                    //         maxWidth: 250,
-                    //         maxHeight: 300,
-                    //       ),
-                    //       child: Image.network(
-                    //         message.imageUrl!,
-                    //         fit: BoxFit.cover,
-                    //         loadingBuilder: (context, child, loadingProgress) {
-                    //           if (loadingProgress == null) return child;
-                    //           return SizedBox(
-                    //             height: 200,
-                    //             child: Center(
-                    //               child: CircularProgressIndicator(
-                    //                 value:
-                    //                     loadingProgress.expectedTotalBytes !=
-                    //                         null
-                    //                     ? loadingProgress
-                    //                               .cumulativeBytesLoaded /
-                    //                           loadingProgress
-                    //                               .expectedTotalBytes!
-                    //                     : null,
-                    //               ),
-                    //             ),
-                    //           );
-                    //         },
-                    //         errorBuilder: (context, error, stackTrace) {
-                    //           return Container(
-                    //             height: 200,
-                    //             color: Colors.grey[300],
-                    //             child: const Icon(
-                    //               Icons.broken_image,
-                    //               size: 50,
-                    //               color: Colors.grey,
-                    //             ),
-                    //           );
-                    //         },
-                    //       ),
-                    //     ),
-                    //   ),
-                    // ),
-                    Stack(
-                      children: [
-                        GestureDetector(
-                          onTap: () =>
-                              showFullScreenImage(message.imageUrl!, context),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(5),
-                            child: Image.network(
-                              message.imageUrl!,
-                              fit: BoxFit.cover,
-                              loadingBuilder:
-                                  (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
-                                    return SizedBox(
-                                      height: 200,
-                                      child: Center(
-                                        child: CircularProgressIndicator(
-                                          value:
-                                              loadingProgress
-                                                      .expectedTotalBytes !=
-                                                  null
-                                              ? loadingProgress
-                                                        .cumulativeBytesLoaded /
-                                                    loadingProgress
-                                                        .expectedTotalBytes!
-                                              : null,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  height: 200,
-                                  color: Colors.grey[300],
-                                  child: const Icon(
-                                    Icons.broken_image,
-                                    size: 50,
-                                    color: Colors.grey,
-                                  ),
-                                );
-                              },
-                            ),
+                  if (hasImage)
+                    GestureDetector(
+                      onTap: () => showFullScreenImage(imageUrl, context),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: CloudflareMediaImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          width: 250,
+                          loading: const SizedBox(
+                            width: 250,
+                            height: 200,
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                          error: Container(
+                            width: 250,
+                            height: 200,
+                            color: Colors.grey.shade300,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.broken_image, size: 48),
                           ),
                         ),
-                        Positioned(
-                          bottom: 2,
-                          right: 5,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.white,
-                                  spreadRadius: 5,
-                                  blurRadius: 15,
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              children: [
-                                currentTime(message.timestamp),
-                                if (isMe) ...[
-                                  const SizedBox(width: 4),
-                                  buildMessageStatusIcon(
-                                    message,
-                                    widget.otherUser.uid,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                    if (message.message.isNotEmpty) const SizedBox(height: 8),
-                  ],
-                  // Text message (for regular messages or image captions)
-                  // if (message.message.isNotEmpty)
-                  //   Text(
-                  //     message.message,
-                  //     style: TextStyle(
-                  //       color: isMe ? Colors.white : Colors.black87,
-                  //     ),
-                  //   ),
-                  if (message.message.isNotEmpty)
+                  if (hasImage && hasText) const SizedBox(height: 8),
+                  if (hasText)
                     Text(
-                      message.message,
+                      text,
                       style: TextStyle(
                         color: hasBoth
                             ? Colors.black
-                            : (isMe ? Colors.white : Colors.black87),
+                            : isMe
+                                ? Colors.white
+                                : Colors.black87,
                       ),
                     ),
-                  SizedBox(height: 4),
-                  if (message.message.isNotEmpty)
+                  const SizedBox(height: 4),
+                  if (hasImage)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          currentTime(message.timestamp),
+                          if (isMe) ...[
+                            const SizedBox(width: 4),
+                            buildMessageStatusIcon(message, widget.otherUser.uid),
+                          ],
+                        ],
+                      ),
+                    )
+                  else
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -220,23 +168,25 @@ class MessageAndImageDisplay extends StatelessWidget {
                               fontSize: 10,
                               color: isMe ? Colors.white : Colors.black54,
                             ),
-                          ),
-                        if (!hasBoth)
-                          if (isMe) ...[
-                            const SizedBox(width: 4),
-                            buildMessageStatusIcon(
-                              message,
-                              widget.otherUser.uid,
+                          )
+                        else
+                          Text(
+                            formatMessageTime(message.timestamp),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.black54,
                             ),
-                          ],
+                          ),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          buildMessageStatusIcon(message, widget.otherUser.uid),
+                        ],
                       ],
                     ),
                 ],
               ),
             ),
           ),
-
-          if (isMe) const SizedBox(width: 8),
         ],
       ),
     );

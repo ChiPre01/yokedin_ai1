@@ -1,49 +1,94 @@
-
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:yoked_in/provider/group_chat_provider.dart';
+import 'package:image_picker/image_picker.dart';
 
-class ImagePreviewDialog extends ConsumerWidget {
-  final File imageFile;
-  final String groupId;
+class ImagePreviewDialog extends StatefulWidget {
+  final XFile imageFile;
 
   const ImagePreviewDialog({
     super.key,
     required this.imageFile,
-    required this.groupId,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isUploading = ref.watch(isUploadingProvider(groupId));
+  State<ImagePreviewDialog> createState() => _ImagePreviewDialogState();
+}
 
+class _ImagePreviewDialogState extends State<ImagePreviewDialog> {
+  final TextEditingController _captionController = TextEditingController();
+
+  @override
+  void dispose() {
+    _captionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Send Image?'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.file(imageFile, height: 250, fit: BoxFit.cover),
-          ),
-        ],
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FutureBuilder<Uint8List>(
+              future: widget.imageFile.readAsBytes(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 200,
+                    child: Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError || !snapshot.hasData) {
+                  return const SizedBox(
+                    height: 200,
+                    child: Center(
+                      child: Text('Unable to preview this image.'),
+                    ),
+                  );
+                }
+
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    snapshot.data!,
+                    height: 250,
+                    fit: BoxFit.contain,
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _captionController,
+              maxLines: 3,
+              minLines: 1,
+              maxLength: 500,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                hintText: 'Add a caption...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
-          onPressed: isUploading ? null : () => Navigator.pop(context, false),
+          onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: isUploading ? null : () => Navigator.pop(context, true),
-          child: isUploading
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Send'),
+          onPressed: () {
+            Navigator.pop(context, _captionController.text.trim());
+          },
+          child: const Text('Send'),
         ),
       ],
     );

@@ -141,8 +141,7 @@ final filteredUsersProvider = Provider<AsyncValue<List<UserModel>>>((ref) {
         list
             .where(
               (u) =>
-                  u.name.toLowerCase().contains(query.toLowerCase()) ||
-                  u.email.toLowerCase().contains(query.toLowerCase()),
+                  u.name.toLowerCase().contains(query.trim().toLowerCase()),
             )
             .toList(),
       );

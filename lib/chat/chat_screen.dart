@@ -1,12 +1,9 @@
-
 import 'dart:async';
-import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:yoked_in/auth/zego_secret_key.dart';
 import 'package:yoked_in/chat/chat_title.dart';
 import 'package:yoked_in/chat/message_image.dart';
 import 'package:yoked_in/chat/message_model.dart';
@@ -16,8 +13,6 @@ import 'package:yoked_in/helper/date_time_helper.dart';
 import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/widgets/utilis.dart';
 import 'package:yoked_in/widgets/video_audio_call_button.dart';
-import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
-import 'package:zego_uikit_signaling_plugin/zego_uikit_signaling_plugin.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String chatId;
@@ -38,8 +33,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ Initialize Zego with user's real name
-    _initializeZego();
     // Attach listener to track focus events on text field
     _textFieldFocusNode.addListener(() {
       if (_textFieldFocusNode.hasFocus) {
@@ -48,24 +41,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _handleTextFieldUnfocus();
       }
     });
-  }
-
-  // ✅ Add this method
-  Future<void> _initializeZego() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    try {
-      await ZegoUIKitPrebuiltCallInvitationService().init(
-        appID: ZegoConfig.appID,
-        appSign: ZegoConfig.appSign,
-        userID: user.uid,
-        userName: user.displayName ?? 'User',
-        plugins: [ZegoUIKitSignalingPlugin()],
-      );
-    } catch (e) {
-      print('Error initializing Zego: $e');
-    }
   }
 
   Timer? _readStatusTimer;
@@ -198,6 +173,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // In your AppBar actions:
         actions: [
           actionButton(
+            context,
             false,
             widget.otherUser.uid,
             widget.otherUser.name,
@@ -206,6 +182,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           // Video call button
           actionButton(
+            context,
             true,
             widget.otherUser.uid,
             widget.otherUser.name,
@@ -221,7 +198,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   builder: (context) => AlertDialog(
                     title: const Text('Disconnect'),
                     content: Text(
-                      'Are you sure you want to unfriend ${widget.otherUser.name}?',
+                      'Are you sure you want to Disconnect ${widget.otherUser.name}?',
                     ),
                     actions: [
                       TextButton(
@@ -253,7 +230,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'unfriend', child: Text('End Connection')),
+              const PopupMenuItem(
+                  value: 'unfriend', child: Text('End Connection')),
             ],
           ),
         ],
@@ -307,8 +285,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     final message = messages[index];
-                    final isMe =
-                        message.senderId ==
+                    final isMe = message.senderId ==
                         FirebaseAuth.instance.currentUser!.uid;
                     final isSystem = message.type == 'system';
                     final showDateSeparator = shouldShowDateHeader(
@@ -417,12 +394,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               children: [
                 // Image picker button
                 IconButton(
-                  onPressed: _isUploadingImage
-                      ? null
-                      : () => _showImageOptions(),
+                  onPressed: _isUploadingImage ? null : _showMediaOptions,
+                  tooltip: 'Attach media',
                   icon: Icon(
-                    Icons.image,
-                    size: 30,
+                    Icons.attach_file,
+                    size: 28,
                     color: _isUploadingImage ? Colors.grey : Colors.blue,
                   ),
                 ),
@@ -449,13 +425,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     onTap: _handleTextFieldFocus,
                   ),
                 ),
-                const SizedBox(width: 8),
-                // Send button
+
+                const SizedBox(width: 4),
+
+// Send button.
                 FloatingActionButton(
                   onPressed: _isUploadingImage ? null : _sendMessage,
                   mini: true,
                   elevation: 0,
-
                   backgroundColor: Colors.transparent,
                   child: _isUploadingImage
                       ? const SizedBox(
@@ -479,39 +456,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   /// IMAGE HANDLING METHODS
   // these methods is for image picker :
-  void _showImageOptions() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take Photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cancel),
-              title: const Text('Cancel'),
-              onTap: () => Navigator.pop(context),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -523,8 +467,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
 
       if (pickedFile != null) {
-        final File imageFile = File(pickedFile.path);
-        await _showImagePreview(imageFile);
+        await _showImagePreview(pickedFile);
       }
     } catch (e) {
       if (mounted) {
@@ -538,51 +481,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   // Preview image before sending
-  Future<void> _showImagePreview(File imageFile) async {
-    final TextEditingController captionController = TextEditingController();
+  Future<void> _showImagePreview(XFile imageFile) async {
+    final captionController = TextEditingController();
 
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        contentPadding: const EdgeInsets.all(16),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              constraints: const BoxConstraints(maxHeight: 300),
-              child: Image.file(imageFile, fit: BoxFit.contain),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: captionController,
-              decoration: const InputDecoration(
-                hintText: 'Add a caption (optional)',
-                border: OutlineInputBorder(),
+    try {
+      final imageBytes = await imageFile.readAsBytes();
+
+      if (!mounted) return;
+
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          contentPadding: const EdgeInsets.all(16),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                constraints: const BoxConstraints(maxHeight: 300),
+                child: Image.memory(
+                  imageBytes,
+                  fit: BoxFit.contain,
+                ),
               ),
-              maxLines: 3,
+              const SizedBox(height: 16),
+              TextField(
+                controller: captionController,
+                decoration: const InputDecoration(
+                  hintText: 'Add a caption (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Send'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Send'),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (result == true) {
-      await _sendImageMessage(imageFile, captionController.text.trim());
+      if (result == true && mounted) {
+        await _sendImageMessage(
+          imageFile,
+          captionController.text.trim(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackbar(
+          context: context,
+          type: SnackbarType.error,
+          description: 'Unable to preview image: $e',
+        );
+      }
+    } finally {
+      captionController.dispose();
     }
   }
 
   // Send image to Firestore/Storage
-  Future<void> _sendImageMessage(File imageFile, String caption) async {
+  Future<void> _sendImageMessage(XFile imageFile, String caption) async {
     setState(() {
       _isUploadingImage = true;
     });
@@ -630,5 +595,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
       }
     }
+  }
+
+  // Only picture attachments are supported in private chats.
+  void _showMediaOptions() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take photo'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose image'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

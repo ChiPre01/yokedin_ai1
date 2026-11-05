@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,14 +18,21 @@ class CreateGroupScreen extends ConsumerStatefulWidget {
 class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   final _nameController = TextEditingController();
   final _selectedMembers = <String>{};
-  File? _groupImage;
+  XFile? _groupImage;
   bool _isCreating = false;
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      setState(() => _groupImage = File(pickedFile.path));
+
+    final pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1920,
+      maxHeight: 1920,
+      imageQuality: 85,
+    );
+
+    if (pickedFile != null && mounted) {
+      setState(() => _groupImage = pickedFile);
     }
   }
 
@@ -119,13 +126,46 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
           // Group image
           GestureDetector(
             onTap: _pickImage,
-            child: CircleAvatar(
-              radius: 50,
-              backgroundImage:
-                  _groupImage != null ? FileImage(_groupImage!) : null,
-              child: _groupImage == null
-                  ? const Icon(Icons.add_a_photo, size: 40)
-                  : null,
+            child: FutureBuilder<Uint8List>(
+              future: _groupImage?.readAsBytes(),
+              builder: (context, snapshot) {
+                if (_groupImage == null) {
+                  return const CircleAvatar(
+                    radius: 50,
+                    child: Icon(Icons.add_a_photo, size: 40),
+                  );
+                }
+
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const CircleAvatar(
+                    radius: 50,
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError || !snapshot.hasData) {
+                  return const CircleAvatar(
+                    radius: 50,
+                    child: Icon(Icons.broken_image, size: 40),
+                  );
+                }
+
+                return CircleAvatar(
+                  radius: 50,
+                  child: ClipOval(
+                    child: Image.memory(
+                      snapshot.data!,
+                      width: 100,
+                      height: 100,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 20),

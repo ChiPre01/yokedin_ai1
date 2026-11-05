@@ -5,8 +5,9 @@ import 'package:yoked_in/provider/group_chat_provider.dart';
 import 'package:yoked_in/provider/user_status_provider.dart';
 import 'package:yoked_in/widgets/user_avatar.dart';
 import 'package:yoked_in/widgets/utilis.dart';
+import 'package:yoked_in/other_screens/view_user_profile_screen.dart';
 
-class MembersListSection extends ConsumerWidget {
+class MembersListSection extends ConsumerStatefulWidget {
   final GroupModel group;
   final String currentUserId;
   final bool isAdmin;
@@ -21,101 +22,110 @@ class MembersListSection extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: group.members.length,
-      itemBuilder: (context, index) {
-        final memberId = group.members[index];
-        final memberAsync = ref.watch(memberInfoProvider(memberId));
+  ConsumerState<MembersListSection> createState() => _MembersListSectionState();
+}
 
-        return memberAsync.when(
-          data: (user) {
-            if (user == null) {
-              return const SizedBox.shrink();
-            }
+class _MembersListSectionState extends ConsumerState<MembersListSection> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
 
-            final isMemberAdmin = group.admins.contains(memberId);
-            final isCurrentUser = memberId == currentUserId;
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
-            return Stack(
-              children: [
-                ListTile(
-                  leading: UserAvatar(
-                    photoUrl: user.photoURL,
-                    radius: 20,
-                    fallbackIcon: Icons.person,
-                  ),
-                  title: Text(user.name + (isCurrentUser ? ' (You)' : '')),
-                  subtitle: Text(isMemberAdmin ? 'Admin' : 'Member'),
-                  trailing: (isAdmin && !isCurrentUser)
-                      ? PopupMenuButton(
-                          itemBuilder: (context) => [
-                            if (!isMemberAdmin)
-                              const PopupMenuItem(
-                                value: 'make_admin',
-                                child: Text('Make Admin'),
-                              ),
-                            if (isMemberAdmin && group.admins.length > 1)
-                              const PopupMenuItem(
-                                value: 'remove_admin',
-                                child: Text('Remove Admin'),
-                              ),
-                            const PopupMenuItem(
-                              value: 'remove',
-                              child: Text(
-                                'Remove from Group',
-                                style: TextStyle(color: Colors.red),
-                              ),
-                            ),
-                          ],
-                          onSelected: (value) => _handleMemberAction(
-                            context,
-                            ref,
-                            value.toString(),
-                            memberId,
-                            user.name,
-                          ),
-                        )
-                      : null,
-                ),
-                Positioned(
-                  bottom: 15,
-                  left: 43,
-                  child: Consumer(
-                    builder: (context, ref, _) {
-                      final statusAsync = ref.watch(
-                        userStatusProvider(user.uid),
-                      );
-                      return statusAsync.when(
-                        data: (isOnline) => CircleAvatar(
-                          radius: 5,
-                          backgroundColor:
-                              isOnline ? Colors.green : Colors.grey,
-                        ),
-                        loading: () => const CircleAvatar(
-                          radius: 5,
-                          backgroundColor: Colors.grey,
-                        ),
-                        error: (_, __) => const CircleAvatar(
-                          radius: 5,
-                          backgroundColor: Colors.grey,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
-          loading: () => const ListTile(
-            leading: CircleAvatar(child: Icon(Icons.person)),
-            title: Text('Loading...'),
+  @override
+  Widget build(BuildContext context) {
+    final filteredMemberIds = widget.group.members.where((id) {
+      if (_query.trim().isEmpty) return true;
+      final member = ref.watch(memberInfoProvider(id)).asData?.value;
+      return member != null && member.name.toLowerCase().contains(_query.trim().toLowerCase());
+    }).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _query = value),
+            decoration: InputDecoration(
+              hintText: 'Search members by name...',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _query.isEmpty ? null : IconButton(
+                onPressed: () { _searchController.clear(); setState(() => _query = ''); },
+                icon: const Icon(Icons.clear),
+              ),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
           ),
-          error: (_, __) => const SizedBox.shrink(),
-        );
-      },
+        ),
+        if (filteredMemberIds.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(_query.isEmpty ? 'No members found.' : 'No members match "$_query".'),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: filteredMemberIds.length,
+            separatorBuilder: (_, __) => const Divider(height: 1, indent: 72, endIndent: 16),
+            itemBuilder: (context, index) {
+              final memberId = filteredMemberIds[index];
+              final memberAsync = ref.watch(memberInfoProvider(memberId));
+              return memberAsync.when(
+                data: (user) {
+                  if (user == null) return const SizedBox.shrink();
+                  final isMemberAdmin = widget.group.admins.contains(memberId);
+                  final isCurrentUser = memberId == widget.currentUserId;
+                  void openProfile() => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => ViewUserProfileScreen(userId: memberId)));
+
+                  return Stack(
+                    children: [
+                      ListTile(
+                        leading: GestureDetector(onTap: openProfile, child: UserAvatar(
+                          photoUrl: user.photoURL, radius: 22, fallbackIcon: Icons.person)),
+                        title: GestureDetector(
+                          onTap: openProfile,
+                          child: Text('${user.name}${isCurrentUser ? ' (You)' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ),
+                        subtitle: Text(isMemberAdmin ? 'Admin' : 'Member'),
+                        trailing: (widget.isAdmin && !isCurrentUser)
+                            ? PopupMenuButton<String>(
+                                itemBuilder: (context) => [
+                                  if (!isMemberAdmin) const PopupMenuItem(value: 'make_admin', child: Text('Make Admin')),
+                                  if (isMemberAdmin && widget.group.admins.length > 1) const PopupMenuItem(value: 'remove_admin', child: Text('Remove Admin')),
+                                  const PopupMenuItem(value: 'remove', child: Text('Remove from Group', style: TextStyle(color: Colors.red))),
+                                ],
+                                onSelected: (value) => _handleMemberAction(context, ref, value, memberId, user.name),
+                              )
+                            : null,
+                      ),
+                      Positioned(
+                        bottom: 15,
+                        left: 48,
+                        child: Consumer(builder: (context, ref, _) {
+                          final statusAsync = ref.watch(userStatusProvider(user.uid));
+                          return statusAsync.when(
+                            data: (online) => CircleAvatar(radius: 5, backgroundColor: online ? Colors.green : Colors.grey),
+                            loading: () => const CircleAvatar(radius: 5, backgroundColor: Colors.grey),
+                            error: (_, __) => const CircleAvatar(radius: 5, backgroundColor: Colors.grey),
+                          );
+                        }),
+                      ),
+                    ],
+                  );
+                },
+                loading: () => const ListTile(leading: CircleAvatar(child: Icon(Icons.person)), title: Text('Loading...')),
+                error: (_, __) => const SizedBox.shrink(),
+              );
+            },
+          ),
+      ],
     );
   }
 
@@ -130,12 +140,12 @@ class MembersListSection extends ConsumerWidget {
 
     if (action == 'make_admin') {
       await chatService.makeAdmin(
-        groupId: groupId,
+        groupId: widget.groupId,
         userId: memberId,
         userName: userName,
       );
       // ✅ Add this
-      ref.invalidate(groupStreamProvider(groupId));
+      ref.invalidate(groupStreamProvider(widget.groupId));
       if (context.mounted) {
         showAppSnackbar(
           context: context,
@@ -145,12 +155,12 @@ class MembersListSection extends ConsumerWidget {
       }
     } else if (action == 'remove_admin') {
       await chatService.removeAdmin(
-        groupId: groupId,
+        groupId: widget.groupId,
         userId: memberId,
         userName: userName,
       );
       // ✅ Add this
-      ref.invalidate(groupStreamProvider(groupId));
+      ref.invalidate(groupStreamProvider(widget.groupId));
 
       if (context.mounted) {
         showAppSnackbar(
@@ -180,12 +190,12 @@ class MembersListSection extends ConsumerWidget {
 
       if (confirm == true) {
         await chatService.removeGroupMember(
-          groupId: groupId,
+          groupId: widget.groupId,
           userId: memberId,
           userName: userName,
         );
         // ✅ Add this
-        ref.invalidate(groupStreamProvider(groupId));
+        ref.invalidate(groupStreamProvider(widget.groupId));
         if (context.mounted) {
           showAppSnackbar(
             context: context,

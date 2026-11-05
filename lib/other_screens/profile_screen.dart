@@ -11,6 +11,7 @@ import 'package:yoked_in/provider/user_list_provider.dart';
 import 'package:yoked_in/provider/user_profile_provider.dart';
 import 'package:yoked_in/services/cloudflare_media_service.dart';
 import 'package:yoked_in/widgets/utilis.dart';
+import 'package:yoked_in/widgets/full_screen_image.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -69,26 +70,26 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               Stack(
                 alignment: Alignment.center,
                 children: [
-                  CircleAvatar(
-                    radius: 60,
-                    backgroundColor: Colors.grey.shade200,
-                    child: ClipOval(
-                      child: profile.photoUrl == null ||
-                              profile.photoUrl!.isEmpty
-                          ? const SizedBox(
-                              width: 120,
-                              height: 120,
-                              child: Icon(
-                                Icons.person,
-                                size: 50,
-                                color: Colors.grey,
+                  GestureDetector(
+                    onTap: profile.photoUrl == null || profile.photoUrl!.isEmpty
+                        ? null
+                        : () => showFullScreenImage(profile.photoUrl!, context),
+                    child: CircleAvatar(
+                      radius: 60,
+                      backgroundColor: Colors.grey.shade200,
+                      child: ClipOval(
+                        child: profile.photoUrl == null || profile.photoUrl!.isEmpty
+                            ? const SizedBox(
+                                width: 120,
+                                height: 120,
+                                child: Icon(Icons.person, size: 50, color: Colors.grey),
+                              )
+                            : _ProfileAvatarImage(
+                                key: ValueKey(profile.photoUrl),
+                                url: profile.photoUrl!,
+                                size: 120,
                               ),
-                            )
-                          : _ProfileAvatarImage(
-                              key: ValueKey(profile.photoUrl),
-                              url: profile.photoUrl!,
-                              size: 120,
-                            ),
+                      ),
                     ),
                   ),
                   Positioned(
@@ -310,6 +311,19 @@ class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
       );
     }
 
+    final cachedBytes =
+        CloudflareMediaService.instance.getCachedImage(widget.url);
+    if (cachedBytes != null) {
+      return Image.memory(
+        cachedBytes,
+        width: widget.size,
+        height: widget.size,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => _buildFallback(),
+      );
+    }
+
     return FutureBuilder<Uint8List>(
       future: _imageFuture,
       builder: (context, snapshot) {
@@ -332,6 +346,7 @@ class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
           width: widget.size,
           height: widget.size,
           fit: BoxFit.cover,
+          gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
             return _buildFallback();
           },

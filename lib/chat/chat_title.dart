@@ -5,6 +5,7 @@ import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/provider/user_status_provider.dart';
 import 'package:yoked_in/widgets/dot_indicator.dart';
 import 'package:yoked_in/widgets/user_avatar.dart';
+import 'package:yoked_in/other_screens/view_user_profile_screen.dart';
 
 class TitleOfChatScreen extends StatelessWidget {
   const TitleOfChatScreen({super.key, required this.widget});
@@ -22,19 +23,25 @@ class TitleOfChatScreen extends StatelessWidget {
         return statusAsync.when(
           data: (isOnline) => Row(
             children: [
-              UserAvatar(
-                photoUrl: widget.otherUser.photoURL,
-                radius: 16,
-                fallbackIcon: Icons.person,
+              GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => ViewUserProfileScreen(userId: widget.otherUser.uid))),
+                child: UserAvatar(
+                  photoUrl: widget.otherUser.photoURL,
+                  radius: 18,
+                  fallbackIcon: Icons.person,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.otherUser.name,
-                      style: const TextStyle(fontSize: 16),
+                    GestureDetector(
+                      onTap: () => Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ViewUserProfileScreen(userId: widget.otherUser.uid))),
+                      child: Text(widget.otherUser.name,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                     ),
                     // TYPING INDICATOR LOGIC
                     if (isOtherUserTyping)

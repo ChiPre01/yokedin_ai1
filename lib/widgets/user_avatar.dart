@@ -83,6 +83,16 @@ class _UserAvatarState extends State<UserAvatar> {
     }
 
     if (_isCloudflareMedia) {
+      final cachedBytes = CloudflareMediaService.instance
+          .getCachedImage(photoUrl);
+      if (cachedBytes != null) {
+        return CircleAvatar(
+          radius: widget.radius,
+          backgroundColor: widget.backgroundColor,
+          backgroundImage: MemoryImage(cachedBytes),
+        );
+      }
+
       return FutureBuilder<Uint8List>(
         future: _cloudflareImageFuture,
         builder: (context, snapshot) {

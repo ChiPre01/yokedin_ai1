@@ -1,12 +1,9 @@
-
 import 'dart:async';
-import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:yoked_in/auth/zego_secret_key.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/group_chat/group_chat_services.dart';
 import 'package:yoked_in/group_chat/group_info_screen.dart';
@@ -17,9 +14,8 @@ import 'package:yoked_in/group_widgets/group_member_count.dart';
 import 'package:yoked_in/group_widgets/image_preview.dart';
 import 'package:yoked_in/provider/group_chat_provider.dart';
 import 'package:yoked_in/widgets/dot_indicator.dart';
+import 'package:yoked_in/widgets/user_avatar.dart';
 import 'package:yoked_in/widgets/utilis.dart';
-import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
-import 'package:zego_uikit_signaling_plugin/zego_uikit_signaling_plugin.dart';
 
 class GroupChatScreen extends ConsumerStatefulWidget {
   final GroupModel group;
@@ -39,25 +35,8 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeZego();
     _checkMembership();
     _markMessagesAsRead();
-  }
-
-  Future<void> _initializeZego() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    try {
-      await ZegoUIKitPrebuiltCallInvitationService().init(
-        appID: ZegoConfig.appID,
-        appSign: ZegoConfig.appSign,
-        userID: user.uid,
-        userName: widget.group.groupName,
-        plugins: [ZegoUIKitSignalingPlugin()],
-      );
-    } catch (e) {
-      print('Error initializing Zego: $e');
-    }
   }
 
   void _checkMembership() {
@@ -135,29 +114,47 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
   }
 
   Future<void> _sendImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    try {
+      final picker = ImagePicker();
 
-    if (pickedFile != null && mounted) {
-      _showImagePreviewDialog(File(pickedFile.path));
+      final XFile? pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+
+      if (pickedFile != null && mounted) {
+        _showImagePreviewDialog(pickedFile);
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackbar(
+          context: context,
+          type: SnackbarType.error,
+          description: 'Unable to select image: $e',
+        );
+      }
     }
   }
 
-  void _showImagePreviewDialog(File imageFile) async {
-    final result = await showDialog<bool>(
+  Future<void> _showImagePreviewDialog(XFile imageFile) async {
+    final caption = await showDialog<String>(
       context: context,
-      builder: (BuildContext context) => ImagePreviewDialog(
+      builder: (BuildContext dialogContext) => ImagePreviewDialog(
         imageFile: imageFile,
-        groupId: widget.group.groupId,
       ),
     );
 
-    if (result == true && mounted) {
-      await _uploadAndSendImage(imageFile);
+    if (caption != null && mounted) {
+      await _uploadAndSendImage(imageFile, caption);
     }
   }
 
-  Future<void> _uploadAndSendImage(File imageFile) async {
+  Future<void> _uploadAndSendImage(
+    XFile imageFile,
+    String caption,
+  ) async {
     if (!mounted) return;
 
     ref.read(isUploadingProvider(widget.group.groupId).notifier).state = true;
@@ -170,16 +167,13 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
       if (!mounted) return;
 
       if (imageUrl.isNotEmpty) {
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        await ref
-            .read(groupChatServiceProvider)
-            .sendGroupImageMessage(
+        await ref.read(groupChatServiceProvider).sendGroupImageMessage(
               groupId: widget.group.groupId,
               imageUrl: imageUrl,
+              caption: caption.trim().isEmpty ? null : caption.trim(),
             );
-
         if (!mounted) return;
+
         showAppSnackbar(
           context: context,
           type: SnackbarType.success,
@@ -189,7 +183,7 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
         showAppSnackbar(
           context: context,
           type: SnackbarType.error,
-          description: 'Failed to upload image',
+          description: 'Failed to upload image. Please try again.',
         );
       }
     } catch (e) {
@@ -197,7 +191,7 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
         showAppSnackbar(
           context: context,
           type: SnackbarType.error,
-          description: "Unable to complete a process",
+          description: 'Unable to send image: $e',
         );
       }
     } finally {
@@ -248,13 +242,10 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
           ),
           child: Row(
             children: [
-              CircleAvatar(
-                backgroundImage: widget.group.groupPhotoURL != null
-                    ? NetworkImage(widget.group.groupPhotoURL!)
-                    : null,
-                child: widget.group.groupPhotoURL == null
-                    ? const Icon(Icons.group)
-                    : null,
+              UserAvatar(
+                photoUrl: widget.group.groupPhotoURL,
+                radius: 20,
+                fallbackIcon: Icons.group,
               ),
               const SizedBox(width: 12),
               Expanded(

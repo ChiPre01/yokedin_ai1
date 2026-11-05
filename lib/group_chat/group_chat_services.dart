@@ -1,10 +1,9 @@
-
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
+import 'package:yoked_in/services/cloudflare_media_service.dart';
 
 class GroupChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -16,10 +15,8 @@ class GroupChatService {
   Future<bool> areUsersFriends(String userId1, String userId2) async {
     final chatId = _generateChatId(userId1, userId2);
     // Only read from Firestore if not cached
-    final friendship = await _firestore
-        .collection('friendships')
-        .doc(chatId)
-        .get();
+    final friendship =
+        await _firestore.collection('friendships').doc(chatId).get();
 
     final exists = friendship.exists;
     return exists;
@@ -94,24 +91,25 @@ class GroupChatService {
   }
 
   // -------------------- IMAGE MESSAGES IN GROUP --------------------
-  Future<String> uploadImage(File imageFile, String chatId) async {
-    try {
-      final fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_$currentUserId.jpg';
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('chat_images')
-          .child(chatId)
-          .child(fileName);
 
-      final uploadTask = storageRef.putFile(imageFile);
-      final snapshot = await uploadTask.whenComplete(() {});
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-      // print("sizeofdocs4 ${downloadUrl.length}");
-      // print("sizeofdocs5 ${uploadTask}");
-      return downloadUrl;
+  Future<String> uploadImage(XFile imageFile, String groupId) async {
+    try {
+      final result = await CloudflareMediaService.instance.uploadFile(
+        imageFile,
+        purpose: 'group',
+        groupId: groupId,
+        category: 'image',
+      );
+
+      final imageUrl = result['url'];
+
+      if (imageUrl is! String || imageUrl.isEmpty) {
+        throw Exception('Cloudflare did not return an image URL.');
+      }
+
+      return imageUrl;
     } catch (e) {
-      // print('Error uploading image: $e');
+      print('Error uploading group image to Cloudflare R2: $e');
       return '';
     }
   }
@@ -142,10 +140,8 @@ class GroupChatService {
       final messageId = _firestore.collection('groupMessages').doc().id;
 
       // Get sender photo
-      final userDoc = await _firestore
-          .collection('users')
-          .doc(currentUserId)
-          .get();
+      final userDoc =
+          await _firestore.collection('users').doc(currentUserId).get();
       String? photoURL;
       if (userDoc.exists) {
         photoURL = userDoc.data()?['photoURL'];
@@ -224,14 +220,14 @@ class GroupChatService {
               .collection('notifications')
               .doc(notificationId)
               .set({
-                'uid': currentUserId,
-                'username': senderName,
-                'description': message,
-                'timestamp': FieldValue.serverTimestamp(),
-                'type': 'group_message',
-                'groupId': groupId,
-                'groupName': groupName,
-              });
+            'uid': currentUserId,
+            'username': senderName,
+            'description': message,
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'group_message',
+            'groupId': groupId,
+            'groupName': groupName,
+          });
         }
       }
     } catch (e) {
@@ -250,19 +246,19 @@ class GroupChatService {
         .limit(limit)
         .snapshots()
         .map((snapshot) {
-          // Filter out messages with null data and map them
-          final messages = <GroupMessageModel>[];
-          for (var doc in snapshot.docs) {
-            try {
-              final message = GroupMessageModel.fromMap(doc.data());
-              messages.add(message);
-            } catch (e) {
-              print('Error parsing message ${doc.id}: $e');
-              // Skip malformed messages
-            }
-          }
-          return messages;
-        });
+      // Filter out messages with null data and map them
+      final messages = <GroupMessageModel>[];
+      for (var doc in snapshot.docs) {
+        try {
+          final message = GroupMessageModel.fromMap(doc.data());
+          messages.add(message);
+        } catch (e) {
+          print('Error parsing message ${doc.id}: $e');
+          // Skip malformed messages
+        }
+      }
+      return messages;
+    });
   }
 
   // Add member to group (must be friend)
@@ -492,10 +488,8 @@ class GroupChatService {
         Future.delayed(const Duration(seconds: 1), () async {
           try {
             // Check again before cleanup
-            final doc = await _firestore
-                .collection('groups')
-                .doc(groupId)
-                .get();
+            final doc =
+                await _firestore.collection('groups').doc(groupId).get();
             if (doc.exists) {
               await _firestore.collection('groups').doc(groupId).update({
                 'typing.$currentUserId': false,
@@ -542,68 +536,136 @@ class GroupChatService {
   }
 
   // Send group image message
-  Future<String> sendGroupImageMessage({
+ 
+  // -------------------- GROUP CHAT MEDIA MESSAGES --------------------
+
+  /// Sends a group media message after its upload to Cloudflare R2.
+  ///
+  /// Only picture messages are supported.
+  Future<String> sendGroupMediaMessage({
     required String groupId,
-    required String imageUrl,
+    required String mediaUrl,
+    required String mediaCategory,
     String? caption,
+    String? mediaKey,
+    String? fileName,
+    String? contentType,
+    int? fileSize,
+    int? expiresAtMs,
   }) async {
     try {
-      final currentUser = _auth.currentUser!;
-      final messageId = _firestore.collection('groupMessages').doc().id;
+      final currentUser = _auth.currentUser;
 
-      // Get sender photo
-      final userDoc = await _firestore
-          .collection('users')
-          .doc(currentUserId)
-          .get();
-      String? photoURL;
-      if (userDoc.exists) {
-        photoURL = userDoc.data()?['photoURL'];
+      if (currentUser == null) {
+        return 'You must sign in before sending media.';
       }
 
-      // ✅ Get group data to update unread counts
-      final groupDoc = await _firestore.collection('groups').doc(groupId).get();
+      const supportedCategories = {'image'};
+
+      if (!supportedCategories.contains(mediaCategory)) {
+        return 'Unsupported media category.';
+      }
+
+      if (mediaUrl.trim().isEmpty) {
+        return 'The media URL is empty.';
+      }
+
+      final groupRef = _firestore.collection('groups').doc(groupId);
+      final groupDoc = await groupRef.get();
+
       if (!groupDoc.exists) {
         return 'Group not found';
       }
 
       final groupData = groupDoc.data()!;
       final members = List<String>.from(groupData['members'] ?? []);
-      final batch = _firestore.batch();
 
-      batch.set(_firestore.collection('groupMessages').doc(messageId), {
+      if (!members.contains(currentUser.uid)) {
+        return 'You are not a member of this group.';
+      }
+
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+
+      final senderPhotoURL = userDoc.data()?['photoURL'];
+
+      final messageId =
+          _firestore.collection('groupMessages').doc().id;
+
+      final trimmedCaption = caption?.trim() ?? '';
+
+      const defaultLabels = <String, String>{'image': '📷 Photo'};
+
+      final lastMessage = trimmedCaption.isNotEmpty
+          ? trimmedCaption
+          : defaultLabels[mediaCategory]!;
+
+      final messageData = <String, dynamic>{
         'messageId': messageId,
         'groupId': groupId,
-        'senderId': currentUserId,
+        'senderId': currentUser.uid,
         'senderName': currentUser.displayName ?? 'User',
-        'senderPhotoURL': photoURL,
+        'senderPhotoURL': senderPhotoURL,
         'message': caption ?? '',
-        'imageUrl': imageUrl,
+        'mediaUrl': mediaUrl,
         'timestamp': FieldValue.serverTimestamp(),
-        'type': 'image',
-      });
-      // ✅ Update unread count for all members except sender
+        'type': mediaCategory,
+        'mediaCategory': mediaCategory,
+      };
+
+      // Keep imageUrl for compatibility with the existing image UI.
+      if (mediaCategory == 'image') {
+        messageData['imageUrl'] = mediaUrl;
+      }
+
+      if (mediaKey != null && mediaKey.isNotEmpty) {
+        messageData['mediaKey'] = mediaKey;
+      }
+
+      if (fileName != null && fileName.isNotEmpty) {
+        messageData['fileName'] = fileName;
+      }
+
+      if (contentType != null && contentType.isNotEmpty) {
+        messageData['contentType'] = contentType;
+      }
+
+      if (fileSize != null) {
+        messageData['fileSize'] = fileSize;
+      }
+
+      if (expiresAtMs != null) {
+        messageData['expiresAtMs'] = expiresAtMs;
+      }
+
+      final batch = _firestore.batch();
+
+      batch.set(
+        _firestore.collection('groupMessages').doc(messageId),
+        messageData,
+      );
+
       final unreadUpdates = <String, dynamic>{
-        'lastMessage': caption?.isNotEmpty == true ? caption : '📷 Photo',
+        'lastMessage': lastMessage,
         'lastMessageTime': FieldValue.serverTimestamp(),
       };
 
-      for (String memberId in members) {
-        if (memberId != currentUserId) {
-          unreadUpdates['unreadCount.$memberId'] = FieldValue.increment(1);
-        } else {
-          unreadUpdates['unreadCount.$memberId'] = 0;
-        }
+      for (final memberId in members) {
+        unreadUpdates['unreadCount.$memberId'] =
+            memberId == currentUser.uid
+                ? 0
+                : FieldValue.increment(1);
       }
 
-      batch.update(_firestore.collection('groups').doc(groupId), unreadUpdates);
+      batch.update(groupRef, unreadUpdates);
 
       await batch.commit();
-      // ✅ Send notification for image message
+
       await sendGroupMessageNotification(
         groupId: groupId,
-        message: caption?.trim().isNotEmpty == true ? caption! : '📷 Photo',
-        // message: caption?.isNotEmpty == true ? caption : '📷 Photo',
+        message: lastMessage,
         senderName: currentUser.displayName ?? 'User',
         members: members,
         groupName: groupData['groupName'] ?? 'Group',
@@ -611,9 +673,95 @@ class GroupChatService {
 
       return 'success';
     } catch (e) {
-      print('Error sending group image: $e');
+      print('Error sending group media: $e');
       return e.toString();
     }
+  }
+
+  /// Uploads a selected file to Cloudflare R2 and sends it to the group.
+  Future<String> sendGroupMediaWithUpload({
+    required String groupId,
+    required XFile file,
+    required String mediaCategory,
+    String? caption,
+  }) async {
+    try {
+      final result = await CloudflareMediaService.instance.uploadFile(
+        file,
+        purpose: 'group',
+        groupId: groupId,
+        category: mediaCategory,
+      );
+
+      final mediaUrl = result['url'];
+      final mediaKey = result['key'];
+
+      if (mediaUrl is! String || mediaUrl.isEmpty) {
+        return 'Cloudflare did not return a media URL.';
+      }
+
+      if (mediaKey is! String || mediaKey.isEmpty) {
+        return 'Cloudflare did not return a media storage key.';
+      }
+
+      final rawExpiry = result['expiresAtMs'];
+      final expiresAtMs =
+          rawExpiry is num ? rawExpiry.toInt() : null;
+
+      return await sendGroupMediaMessage(
+        groupId: groupId,
+        mediaUrl: mediaUrl,
+        mediaCategory: mediaCategory,
+        caption: caption,
+        mediaKey: mediaKey,
+        fileName: file.name,
+        contentType: file.mimeType,
+        fileSize: await file.length(),
+        expiresAtMs: expiresAtMs,
+      );
+    } catch (e) {
+      print('Error uploading or sending group media: $e');
+      return e.toString();
+    }
+  }
+
+  /// Backward-compatible method for existing group image messages.
+  Future<String> sendGroupImageMessage({
+    required String groupId,
+    required String imageUrl,
+    String? caption,
+    String? mediaKey,
+    String? fileName,
+    String? contentType,
+    int? fileSize,
+    int? expiresAtMs,
+    String mediaCategory = 'image',
+  }) async {
+    return sendGroupMediaMessage(
+      groupId: groupId,
+      mediaUrl: imageUrl,
+      mediaCategory: mediaCategory,
+      caption: caption,
+      mediaKey: mediaKey,
+      fileName: fileName,
+      contentType: contentType,
+      fileSize: fileSize,
+      expiresAtMs: expiresAtMs,
+    );
+  }
+
+  /// Backward-compatible upload method for existing image-picker calls.
+  Future<String> sendGroupImageWithUpload({
+    required String groupId,
+    required XFile imageFile,
+    String? caption,
+  }) async {
+    return sendGroupMediaWithUpload(
+      groupId: groupId,
+      file: imageFile,
+      mediaCategory: 'image',
+      caption: caption,
+    );
   }
 
   // to delete a group (admin only)
@@ -647,10 +795,8 @@ class GroupChatService {
       // Delete images from storage (do this after batch to avoid rollback issues)
       try {
         // Delete group profile image
-        final groupDoc = await _firestore
-            .collection('groups')
-            .doc(groupId)
-            .get();
+        final groupDoc =
+            await _firestore.collection('groups').doc(groupId).get();
         if (groupDoc.exists && groupDoc.data()?['groupPhotoURL'] != null) {
           final photoRef = FirebaseStorage.instance.refFromURL(
             groupDoc.data()!['groupPhotoURL'],

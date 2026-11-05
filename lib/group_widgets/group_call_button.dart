@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -100,7 +99,12 @@ class _GroupCallButtonState extends ConsumerState<GroupCallButton> {
           await _notifyGroupMembers();
         } else {
           // Error occurred
-          _showErrorSnackbar(message);
+          final failedInvitees = errorInvitees.join(', ');
+          _showErrorSnackbar(
+            failedInvitees.isEmpty
+                ? message
+                : 'Failed for $failedInvitees: $message',
+          );
         }
       },
     );
@@ -113,9 +117,7 @@ class _GroupCallButtonState extends ConsumerState<GroupCallButton> {
       if (currentUser == null) return;
 
       // Send system message about the call
-      await ref
-          .read(groupChatServiceProvider)
-          .sendGroupMessage(
+      await ref.read(groupChatServiceProvider).sendGroupMessage(
             groupId: widget.group.groupId,
             message: widget.isVideoCall
                 ? '📹 started a video call'

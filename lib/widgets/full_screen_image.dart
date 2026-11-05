@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:yoked_in/widgets/cloudflare_media_image.dart';
 
 void showFullScreenImage(String imageUrl, BuildContext context) {
   Navigator.push(
@@ -24,36 +24,29 @@ void showFullScreenImage(String imageUrl, BuildContext context) {
         ),
         body: Center(
           child: InteractiveViewer(
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.contain,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return Center(
-                  child: CircularProgressIndicator(
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded /
-                              loadingProgress.expectedTotalBytes!
-                        : null,
-                  ),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error, color: Colors.white, size: 50),
-                      Text(
-                        'Failed to load image',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    ],
-                  ),
-                );
-              },
+              child: CloudflareMediaImage(
+            imageUrl: imageUrl,
+            fit: BoxFit.contain,
+            loading: const Center(
+              child: CircularProgressIndicator(),
             ),
-          ),
+            error: const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error,
+                    color: Colors.white,
+                    size: 50,
+                  ),
+                  Text(
+                    'Failed to load image',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          )),
         ),
       ),
     ),

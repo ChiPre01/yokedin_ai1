@@ -52,7 +52,7 @@ class _UsersListScreenState extends ConsumerState<UsersListScreen> {
               onChanged: (value) =>
                   ref.read(searchQueryProvider.notifier).state = value,
               decoration: InputDecoration(
-                hintText: 'Search users by name or email...',
+                hintText: 'Search users by name...',
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: searchQuery.isNotEmpty
                     ? IconButton(

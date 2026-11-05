@@ -8,6 +8,7 @@ import 'package:yoked_in/helper/navigation_helper.dart';
 import 'package:yoked_in/provider/user_list_provider.dart';
 import 'package:yoked_in/provider/user_status_provider.dart';
 import 'package:yoked_in/widgets/user_avatar.dart';
+import 'package:yoked_in/other_screens/view_user_profile_screen.dart';
 import 'package:yoked_in/widgets/utilis.dart';
 
 class UserListTile extends ConsumerWidget {
@@ -20,34 +21,57 @@ class UserListTile extends ConsumerWidget {
     final state = ref.watch(userListTileProvider(user));
     final notifier = ref.read(userListTileProvider(user).notifier);
 
-    return ListTile(
-      // Profile picture or fallback (first letter of name)
-      leading: UserAvatar(
-        photoUrl: user.photoURL,
-        radius: 20,
-        fallbackIcon: Icons.person,
-      ),
-      title: Text(user.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      // Show online/offline status in subtitle
-      subtitle: Consumer(
-        builder: (context, ref, _) {
-          final statusAsync = ref.watch(userStatusProvider(user.uid));
-          return statusAsync.when(
-            data: (isOnline) => Text(
-              isOnline ? 'Online' : 'Offline',
-              style: TextStyle(
-                color: isOnline ? Colors.green : Colors.grey,
-                fontSize: 12,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: () => _openProfile(context),
+                child: UserAvatar(photoUrl: user.photoURL, radius: 29, fallbackIcon: Icons.person),
               ),
-            ),
-            loading: () => Text(user.email),
-            error: (_, __) => Text(user.email),
-          );
-        },
-      ),
-      // Right-side action button (chat, add friend, accept request, etc.)
-      trailing: _buildTrailingWidget(context, ref, state, notifier),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: () => _openProfile(context),
+                      child: Text(user.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 3),
+                    Consumer(
+                      builder: (context, ref, _) {
+                        final statusAsync = ref.watch(userStatusProvider(user.uid));
+                        return statusAsync.when(
+                          data: (isOnline) => Text(isOnline ? 'Online' : 'Offline',
+                            style: TextStyle(color: isOnline ? Colors.green : Colors.grey, fontSize: 12)),
+                          loading: () => const Text('Checking status...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                          error: (_, __) => const Text('Status unavailable', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 9),
+                    _buildTrailingWidget(context, ref, state, notifier),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14),
+          child: Divider(height: 1, thickness: 0.7),
+        ),
+      ],
     );
+  }
+
+  void _openProfile(BuildContext context) {
+    NavigationHelper.push(context, ViewUserProfileScreen(userId: user.uid));
   }
 
   Widget _buildTrailingWidget(

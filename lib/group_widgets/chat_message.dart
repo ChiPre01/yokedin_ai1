@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/helper/current_time.dart';
+import 'package:yoked_in/widgets/cloudflare_media_image.dart';
+import 'package:yoked_in/widgets/full_screen_image.dart';
 import 'package:yoked_in/widgets/user_avatar.dart';
 
 class ChatMessage extends StatelessWidget {
@@ -11,6 +13,19 @@ class ChatMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const unsupportedMediaTypes = {
+      'video',
+      'voice',
+      'voice_note',
+      'voicenote',
+      'audio',
+      'document',
+      'file',
+    };
+    if (unsupportedMediaTypes.contains(message.type.toLowerCase())) {
+      return const SizedBox.shrink();
+    }
+
     final hasImage = message.imageUrl != null;
 
     return Align(
@@ -44,11 +59,34 @@ class ChatMessage extends StatelessWidget {
                     if (message.imageUrl != null)
                       Stack(
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(5),
-                            child: Image.network(
-                              message.imageUrl!,
-                              fit: BoxFit.cover,
+                          GestureDetector(
+                            onTap: () {
+                              if (message.imageUrl != null &&
+                                  message.imageUrl!.isNotEmpty) {
+                                showFullScreenImage(message.imageUrl!, context);
+                              }
+                            },
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(5),
+                              child: CloudflareMediaImage(
+                                imageUrl: message.imageUrl!,
+                                fit: BoxFit.cover,
+                                loading: const SizedBox(
+                                  height: 200,
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                ),
+                                error: Container(
+                                  height: 200,
+                                  color: Colors.grey,
+                                  child: const Icon(
+                                    Icons.broken_image,
+                                    size: 50,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                           Positioned(
@@ -69,12 +107,27 @@ class ChatMessage extends StatelessWidget {
                           ),
                         ],
                       ),
-                    if (message.message.isNotEmpty)
-                      if (!isMe)
-                        Text(
-                          message.message,
-                          style: const TextStyle(color: Colors.black),
+                    // Display ordinary text messages received from other group members.
+                    if (!isMe && !hasImage && message.message.trim().isNotEmpty)
+                      Text(
+                        message.message,
+                        style: const TextStyle(
+                          color: Colors.black,
                         ),
+                      ),
+
+// Display image captions for both the sender and other group members.
+                    if (hasImage && message.message.trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
+                        child: Text(
+                          message.message,
+                          style: const TextStyle(
+                            color: Colors.black,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
                     if (isMe && !hasImage)
                       Wrap(
                         children: [
