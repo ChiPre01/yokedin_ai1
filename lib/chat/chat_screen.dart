@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:yoked_in/ai/screens/meeting_minutes_list_screen.dart';
 import 'package:yoked_in/chat/chat_title.dart';
 import 'package:yoked_in/chat/message_image.dart';
 import 'package:yoked_in/chat/message_model.dart';
@@ -189,10 +190,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             widget.chatId,
             ref,
           ),
-          // Popup menu -> unfriend option
+          // Popup menu -> Minutes & End Connection
           PopupMenuButton<String>(
             onSelected: (value) async {
-              if (value == 'unfriend') {
+              if (value == 'minutes') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MeetingMinutesListScreen(
+                      conversationId: widget.chatId,
+                      conversationTitle: widget.otherUser.name,
+                      conversationType: 'private',
+                      otherUserId: widget.otherUser.uid,
+                    ),
+                  ),
+                );
+              } else if (value == 'unfriend') {
                 final result = await showDialog<bool>(
                   context: context,
                   builder: (context) => AlertDialog(
@@ -231,7 +244,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
-                  value: 'unfriend', child: Text('End Connection')),
+                value: 'minutes',
+                child: Text('Minutes'),
+              ),
+              const PopupMenuItem(
+                value: 'unfriend',
+                child: Text('End Connection'),
+              ),
             ],
           ),
         ],

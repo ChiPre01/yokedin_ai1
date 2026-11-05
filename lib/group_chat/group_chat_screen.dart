@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:yoked_in/ai/screens/meeting_minutes_list_screen.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/group_chat/group_chat_services.dart';
 import 'package:yoked_in/group_chat/group_info_screen.dart';
@@ -230,6 +231,28 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
         actions: [
           GroupCallButton(group: widget.group, isVideoCall: false),
           GroupCallButton(group: widget.group, isVideoCall: true),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'minutes') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MeetingMinutesListScreen(
+                      conversationId: widget.group.groupId,
+                      conversationTitle: widget.group.groupName,
+                      conversationType: 'group',
+                    ),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'minutes',
+                child: Text('Minutes'),
+              ),
+            ],
+          ),
           const SizedBox(width: 8),
         ],
         title: GestureDetector(
