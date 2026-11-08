@@ -3,6 +3,13 @@ import * as admin from "firebase-admin";
 
 admin.initializeApp();
 
+// Phase 2 AI callables (Groq). See functions/src/ai/aiFunctions.ts.
+export {
+  generateMeetingMinutes,
+  smartReplies,
+  summarizeChat,
+} from "./ai/aiFunctions";
+
 // Cloud Function that triggers when a new notification document is created
 // Listens to: users/{userId}/notifications/{notificationId}
 export const sendUserNotification = onDocumentCreated(

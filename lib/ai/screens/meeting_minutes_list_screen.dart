@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 import 'package:yoked_in/ai/screens/meeting_minutes_detail_screen.dart';
 import 'package:yoked_in/ai/services/meeting_minutes_service.dart';
+import 'package:yoked_in/ai/widgets/generate_minutes_ai_sheet.dart';
 
 class MeetingMinutesListScreen extends ConsumerStatefulWidget {
   final String conversationId; // chatId or groupId
@@ -109,6 +110,18 @@ class _MeetingMinutesListScreenState
         ),
         actions: [
           IconButton(
+            tooltip: 'Generate Minutes with AI',
+            icon: const Icon(Icons.auto_awesome, color: Colors.blueAccent),
+            onPressed: () => showGenerateMinutesAISheet(
+              context: context,
+              ref: ref,
+              conversationId: widget.conversationId,
+              conversationTitle: widget.conversationTitle,
+              conversationType: widget.conversationType,
+              otherUserId: widget.otherUserId,
+            ),
+          ),
+          IconButton(
             tooltip: 'Generate sample minutes',
             icon: _isCreatingSample
                 ? const SizedBox(
@@ -200,6 +213,27 @@ class _MeetingMinutesListScreenState
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
+              onPressed: () => showGenerateMinutesAISheet(
+                context: context,
+                ref: ref,
+                conversationId: widget.conversationId,
+                conversationTitle: widget.conversationTitle,
+                conversationType: widget.conversationType,
+                otherUserId: widget.otherUserId,
+              ),
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: const Text('Generate with AI'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
               onPressed: _isCreatingSample ? null : _generateSampleMinutes,
               icon: _isCreatingSample
                   ? const SizedBox(
@@ -207,14 +241,12 @@ class _MeetingMinutesListScreenState
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: Colors.blueAccent,
                       ),
                     )
                   : const Icon(Icons.add_rounded),
               label: const Text('Create Sample Minutes'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                foregroundColor: Colors.white,
+              style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),

@@ -1,0 +1,32 @@
+// Deployment configuration for the existing yokedin-media-api Worker.
+//
+// The production cron schedule was confirmed as */5 * * * *.
+// Keep this trigger and the MEDIA_BUCKET binding when deploying.
+//
+// GROQ_API_KEY must be configured as a Worker secret. Never put its value
+// in this file, source code, or a committed .dev.vars file.
+{
+  "name": "yokedin-media-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "yokedin-media"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "ratelimits": [
+    {
+      "name": "AI_RATE_LIMITER",
+      "namespace_id": "8062001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:yoked_in/ai/screens/meeting_minutes_list_screen.dart';
+import 'package:yoked_in/ai/widgets/ai_chat_summary_sheet.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/group_chat/group_chat_services.dart';
 import 'package:yoked_in/group_chat/group_info_screen.dart';
@@ -244,12 +245,24 @@ class _GroupChatScreen extends ConsumerState<GroupChatScreen> {
                     ),
                   ),
                 );
+              } else if (value == 'summarize') {
+                showChatSummaryBottomSheet(
+                  context: context,
+                  ref: ref,
+                  conversationId: widget.group.groupId,
+                  conversationTitle: widget.group.groupName,
+                  isGroup: true,
+                );
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'minutes',
                 child: Text('Minutes'),
+              ),
+              const PopupMenuItem(
+                value: 'summarize',
+                child: Text('Summarize Chat (AI)'),
               ),
             ],
           ),

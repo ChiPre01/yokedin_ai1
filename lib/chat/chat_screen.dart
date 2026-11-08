@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:yoked_in/ai/screens/meeting_minutes_list_screen.dart';
+import 'package:yoked_in/ai/widgets/ai_chat_summary_sheet.dart';
 import 'package:yoked_in/chat/chat_title.dart';
 import 'package:yoked_in/chat/message_image.dart';
 import 'package:yoked_in/chat/message_model.dart';
@@ -190,7 +191,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             widget.chatId,
             ref,
           ),
-          // Popup menu -> Minutes & End Connection
+          // Popup menu -> Minutes, AI Summary & End Connection
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'minutes') {
@@ -204,6 +205,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       otherUserId: widget.otherUser.uid,
                     ),
                   ),
+                );
+              } else if (value == 'summarize') {
+                showChatSummaryBottomSheet(
+                  context: context,
+                  ref: ref,
+                  conversationId: widget.chatId,
+                  conversationTitle: widget.otherUser.name,
+                  isGroup: false,
+                  otherUserId: widget.otherUser.uid,
                 );
               } else if (value == 'unfriend') {
                 final result = await showDialog<bool>(
@@ -246,6 +256,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               const PopupMenuItem(
                 value: 'minutes',
                 child: Text('Minutes'),
+              ),
+              const PopupMenuItem(
+                value: 'summarize',
+                child: Text('Summarize Chat (AI)'),
               ),
               const PopupMenuItem(
                 value: 'unfriend',
