@@ -2,8 +2,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/ai/config/ai_config.dart';
+import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 import 'package:yoked_in/ai/screens/meeting_minutes_detail_screen.dart';
 import 'package:yoked_in/ai/services/groq_service.dart';
+import 'package:yoked_in/calls/call_recording_panel.dart';
 
 void showGenerateMinutesAISheet({
   required BuildContext context,
@@ -69,6 +71,18 @@ Bob: Sounds like a plan. Let's sync again next Monday at 10 AM to review everyth
 Alice: Agreed! Talk to you Monday. Bye!
 ''';
     setState(() {});
+  }
+
+  /// Opens minutes that were generated from a saved call transcript.
+  void _openGeneratedMinute(MeetingMinutesModel minute) {
+    if (!mounted) return;
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MeetingMinutesDetailScreen(minute: minute),
+      ),
+    );
   }
 
   Future<void> _generateMinutes() async {
@@ -232,6 +246,13 @@ Alice: Agreed! Talk to you Monday. Bye!
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  CallRecordingPanel(
+                    conversationId: widget.conversationId,
+                    conversationType: widget.conversationType,
+                    conversationTitle: widget.conversationTitle,
+                    onMinuteReady: _openGeneratedMinute,
+                  ),
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [

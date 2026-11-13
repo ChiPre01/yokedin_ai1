@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 
@@ -27,8 +28,14 @@ class MeetingMinutesService {
         .where('conversationId', isEqualTo: conversationId)
         .snapshots()
         .map((snapshot) {
-      final list =
-          snapshot.docs.map((doc) => MeetingMinutesModel.fromFirestore(doc)).toList();
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final list = snapshot.docs
+          .map((doc) => MeetingMinutesModel.fromFirestore(doc))
+          // Minutes are shared with everyone in the conversation. Removing
+          // them only hides your own copy, so another participant's delete
+          // never takes the minutes away from you.
+          .where((minute) => uid.isEmpty || !minute.hiddenFor.contains(uid))
+          .toList();
       // Sort in-memory to prevent requiring composite index creation during early testing
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
@@ -48,9 +55,17 @@ class MeetingMinutesService {
     return docRef.id;
   }
 
-  /// Deletes a meeting minute
+  /// Removes the minutes from the signed-in account only.
+  ///
+  /// The document stays in Firestore because every other participant of the
+  /// meeting - and, for a group, every group member - keeps their own copy.
   Future<void> deleteMeetingMinute(String minuteId) async {
-    await _minutesCollection.doc(minuteId).delete();
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+
+    await _minutesCollection.doc(minuteId).update({
+      'hiddenFor': FieldValue.arrayUnion([uid]),
+    });
   }
 
   /// Toggle action item completion status

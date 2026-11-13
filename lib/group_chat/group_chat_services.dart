@@ -237,7 +237,7 @@ class GroupChatService {
 
   Stream<List<GroupMessageModel>> getGroupMessages(
     String groupId, {
-    int limit = 50,
+    int limit = 30,
   }) {
     return _firestore
         .collection('groupMessages')
@@ -259,6 +259,34 @@ class GroupChatService {
       }
       return messages;
     });
+  }
+
+  /// One page of group messages older than [before], newest first.
+  ///
+  /// Matches [getGroupMessages]: the live stream holds the newest page and the
+  /// rest is fetched as the user scrolls towards older messages.
+  Future<List<GroupMessageModel>> loadOlderGroupMessages(
+    String groupId, {
+    required DateTime before,
+    int limit = 30,
+  }) async {
+    final snapshot = await _firestore
+        .collection('groupMessages')
+        .where('groupId', isEqualTo: groupId)
+        .where('timestamp', isLessThan: Timestamp.fromDate(before))
+        .orderBy('timestamp', descending: true)
+        .limit(limit)
+        .get();
+
+    final messages = <GroupMessageModel>[];
+    for (final doc in snapshot.docs) {
+      try {
+        messages.add(GroupMessageModel.fromMap(doc.data()));
+      } catch (e) {
+        print('Error parsing older message ${doc.id}: $e');
+      }
+    }
+    return messages;
   }
 
   // Add member to group (must be friend)

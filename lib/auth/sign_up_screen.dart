@@ -25,12 +25,19 @@ class SignupScreen extends ConsumerWidget {
       );
       formNotifer.setLoading(false);
       if (res == "success" && context.mounted) {
-        NavigationHelper.pushReplacement(context, UserLoginScreen());
+        // Shown before unwinding: the toast lives in the app overlay, so it
+        // survives the removed sign-up route.
         showAppSnackbar(
           context: context,
           type: SnackbarType.success,
-          description: "Sinup Up Successful. Now turn to login",
+          description: "Account created successfully",
         );
+
+        // Signing up also signs the user in, so the app root switches to the
+        // home screen by itself. Unwind the auth screens instead of pushing a
+        // login screen the user no longer needs.
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
       } else {
         if (context.mounted) {
           showAppSnackbar(

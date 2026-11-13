@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:yoked_in/ai/config/ai_config.dart';
 import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 import 'package:yoked_in/ai/services/meeting_minutes_service.dart';
+import 'package:yoked_in/services/network_http_client.dart';
 
 final groqServiceProvider = Provider<GroqService>((ref) {
   final minutesService = ref.watch(meetingMinutesServiceProvider);
@@ -39,7 +40,7 @@ class GroqService {
     http.Client? client,
     String? baseUrl,
   })  : _minutesService = minutesService,
-        _client = client ?? http.Client(),
+        _client = client ?? workerHttpClient,
         _baseUrl = baseUrl ?? AIConfig.workerBaseUrl;
 
   final MeetingMinutesService _minutesService;
@@ -48,22 +49,40 @@ class GroqService {
 
   /// Generates structured minutes on the server and saves them to Firestore
   /// through the existing [MeetingMinutesService] (unchanged data model).
+  ///
+  /// Pass either [rawContent] (manual notes, capped at the prompt budget) or
+  /// [transcript] (a saved call transcript, which may be far longer: the
+  /// Worker condenses it in sections before generating the minutes). Minutes
+  /// generated from [transcript] never need the original audio again.
   Future<MeetingMinutesModel> generateAndSaveMeetingMinutes({
     required String conversationId,
     required String conversationType, // 'private' or 'group'
     required String conversationTitle,
-    required String rawContent,
+    String rawContent = '',
+    String? transcript,
     List<String> participants = const [],
     Map<String, String> participantNames = const {},
     int durationSeconds = 0,
+    String? meetingId,
   }) async {
-    final content = rawContent.trim();
+    final savedTranscript = transcript?.trim() ?? '';
+    final usingTranscript = savedTranscript.isNotEmpty;
+    final content = usingTranscript ? savedTranscript : rawContent.trim();
+
     if (content.isEmpty) {
       throw const AiServiceException(
         'Please enter conversation notes or tap "Use Sample Dialogue".',
       );
     }
-    if (content.length > AIConfig.maxTranscriptCharacters) {
+
+    if (usingTranscript) {
+      if (content.length > AIConfig.maxCallTranscriptCharacters) {
+        throw AiServiceException(
+          'This transcript is too long (${content.length} of '
+          '${AIConfig.maxCallTranscriptCharacters} characters allowed).',
+        );
+      }
+    } else if (content.length > AIConfig.maxTranscriptCharacters) {
       throw AiServiceException(
         'These notes are too long (${content.length} of '
         '${AIConfig.maxTranscriptCharacters} characters allowed). '
@@ -77,7 +96,7 @@ class GroqService {
         'conversationId': conversationId,
         'conversationType': conversationType,
         'conversationTitle': conversationTitle,
-        'rawContent': content,
+        if (usingTranscript) 'transcript': content else 'rawContent': content,
         'participants': participants,
         'participantNames': participantNames,
         'durationSeconds': durationSeconds,
@@ -102,6 +121,7 @@ class GroqService {
       durationSeconds: durationSeconds,
       participants: participants,
       participantNames: participantNames,
+      meetingId: meetingId,
       summary: summary,
       keyDecisions: _stringList(minuteJson['keyDecisions']),
       actionItems: _actionItems(minuteJson['actionItems']),

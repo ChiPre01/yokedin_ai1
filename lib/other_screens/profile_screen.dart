@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:yoked_in/auth/google_auth_service.dart';
-import 'package:yoked_in/auth/user_login_screen.dart';
 import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/provider/user_list_provider.dart';
 import 'package:yoked_in/provider/user_profile_provider.dart';
@@ -189,7 +188,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   );
 
                   if (shouldLogout == true) {
-                    await FirebaseServices().signOut();
+                    // Never leave the user stuck on an authenticated screen
+                    // because a platform sign-out call misbehaved.
+                    try {
+                      await FirebaseServices().signOut();
+                    } catch (e) {
+                      debugPrint('[PROFILE] Sign-out error: $e');
+                    }
 
                     if (!mounted) return;
 
@@ -203,12 +208,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
                     if (!context.mounted) return;
 
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const UserLoginScreen(),
-                      ),
-                    );
+                    // The app root follows the Firebase auth state, so unwinding
+                    // to it is enough: it now renders the login screen. Pushing a
+                    // second login screen used to leave the old session visible.
+                    Navigator.of(context, rootNavigator: true)
+                        .popUntil((route) => route.isFirst);
                   }
                 },
                 child: const Padding(
@@ -299,12 +303,18 @@ class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
 
   @override
   Widget build(BuildContext context) {
+    // Decode only as many pixels as the avatar is drawn at.
+    final cacheWidth = (widget.size * MediaQuery.devicePixelRatioOf(context))
+        .round()
+        .clamp(32, 1024);
+
     if (!_isCloudflareUrl) {
       return Image.network(
         widget.url,
         width: widget.size,
         height: widget.size,
         fit: BoxFit.cover,
+        cacheWidth: cacheWidth,
         errorBuilder: (context, error, stackTrace) {
           return _buildFallback();
         },
@@ -319,6 +329,7 @@ class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
         width: widget.size,
         height: widget.size,
         fit: BoxFit.cover,
+        cacheWidth: cacheWidth,
         gaplessPlayback: true,
         errorBuilder: (context, error, stackTrace) => _buildFallback(),
       );
@@ -346,6 +357,7 @@ class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
           width: widget.size,
           height: widget.size,
           fit: BoxFit.cover,
+          cacheWidth: cacheWidth,
           gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
             return _buildFallback();

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:yoked_in/chat/chat_screen.dart';
 import 'package:yoked_in/chat/message_model.dart';
 import 'package:yoked_in/helper/current_time.dart';
 import 'package:yoked_in/helper/time_format.dart';
+import 'package:yoked_in/provider/user_status_provider.dart';
 import 'package:yoked_in/widgets/cloudflare_media_image.dart';
 import 'package:yoked_in/widgets/full_screen_image.dart';
 import 'package:yoked_in/widgets/message_status_icon.dart';
@@ -12,7 +14,7 @@ import 'package:yoked_in/widgets/user_avatar.dart';
 /// Displays ordinary text and picture messages in a private chat.
 /// Video, audio, voice-note, and document attachments are intentionally not
 /// rendered; private-chat media is limited to pictures.
-class MessageAndImageDisplay extends StatelessWidget {
+class MessageAndImageDisplay extends ConsumerWidget {
   const MessageAndImageDisplay({
     super.key,
     required this.isMe,
@@ -49,7 +51,12 @@ class MessageAndImageDisplay extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // One shared listener per user, reused by every bubble in the list.
+    final isReceiverOnline =
+        ref.watch(userStatusProvider(widget.otherUser.uid)).asData?.value ??
+            false;
+
     final category = message.type.toLowerCase();
     const unsupportedMediaTypes = {
       'video',
@@ -151,7 +158,11 @@ class MessageAndImageDisplay extends StatelessWidget {
                           currentTime(message.timestamp),
                           if (isMe) ...[
                             const SizedBox(width: 4),
-                            buildMessageStatusIcon(message, widget.otherUser.uid),
+                            buildMessageStatusIcon(
+                              message,
+                              receiverUid: widget.otherUser.uid,
+                              isReceiverOnline: isReceiverOnline,
+                            ),
                           ],
                         ],
                       ),
@@ -179,7 +190,11 @@ class MessageAndImageDisplay extends StatelessWidget {
                           ),
                         if (isMe) ...[
                           const SizedBox(width: 4),
-                          buildMessageStatusIcon(message, widget.otherUser.uid),
+                          buildMessageStatusIcon(
+                            message,
+                            receiverUid: widget.otherUser.uid,
+                            isReceiverOnline: isReceiverOnline,
+                          ),
                         ],
                       ],
                     ),

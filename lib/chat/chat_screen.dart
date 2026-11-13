@@ -32,9 +32,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   bool _isUploadingImage = false;
 
+  /// Older messages are appended as the user scrolls up; the live stream only
+  /// carries the newest page.
+  static const int _pageSize = 30;
+  final List<MessageModel> _olderMessages = [];
+  List<MessageModel> _latestLiveMessages = const [];
+  bool _isLoadingOlder = false;
+  bool _hasMoreOlder = true;
+
+  /// Built once. Creating the Firestore stream inside build() re-ran the query
+  /// on every rebuild, so typing, sending a photo or any provider update
+  /// re-downloaded the page of messages and made the list flicker.
+  late final Stream<List<MessageModel>> _messagesStream =
+      ref.read(chatServiceProvider).getChatMessages(widget.chatId);
+
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onMessagesScroll);
     // Attach listener to track focus events on text field
     _textFieldFocusNode.addListener(() {
       if (_textFieldFocusNode.hasFocus) {
@@ -114,6 +129,63 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _handleTypingStop();
   }
 
+  /// The live page followed by every older page that has been loaded.
+  List<MessageModel> _mergeMessages(List<MessageModel> live) {
+    if (_olderMessages.isEmpty) return live;
+
+    final seen = live.map((message) => message.messageId).toSet();
+    return [
+      ...live,
+      ..._olderMessages.where((message) => !seen.contains(message.messageId)),
+    ];
+  }
+
+  /// The list is reversed, so the oldest message sits at maxScrollExtent.
+  void _onMessagesScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.pixels < position.maxScrollExtent - 400) return;
+    _loadOlderMessages();
+  }
+
+  Future<void> _loadOlderMessages() async {
+    if (_isLoadingOlder || !_hasMoreOlder) return;
+
+    final loaded = _mergeMessages(_latestLiveMessages);
+    if (loaded.isEmpty) return;
+
+    final before = loaded.last.timestamp;
+    if (before == null) {
+      _hasMoreOlder = false;
+      return;
+    }
+
+    setState(() => _isLoadingOlder = true);
+
+    try {
+      final page = await ref.read(chatServiceProvider).loadOlderMessages(
+            widget.chatId,
+            before: before,
+            limit: _pageSize,
+          );
+      if (!mounted) return;
+
+      final known = loaded.map((message) => message.messageId).toSet();
+      final fresh = page
+          .where((message) => !known.contains(message.messageId))
+          .toList();
+
+      setState(() {
+        _olderMessages.addAll(fresh);
+        _hasMoreOlder = page.length >= _pageSize;
+        _isLoadingOlder = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoadingOlder = false);
+    }
+  }
+
   /// SEND TEXT MESSAGE
   Future<void> _sendMessage() async {
     final message = _messageController.text.trim();
@@ -129,7 +201,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       message: message,
     );
 
-    if (result != 'success') {
+    if (result != 'success' && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to send message: $result')),
       );
@@ -150,6 +222,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _scrollController.removeListener(_onMessagesScroll);
     _scrollController.dispose();
     _textFieldFocusNode.dispose(); // Add this
     _typingTimer?.cancel();
@@ -164,8 +237,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final FocusNode _textFieldFocusNode = FocusNode();
   @override
   Widget build(BuildContext context) {
-    final chatService = ref.read(chatServiceProvider);
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -276,7 +347,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // Messages section
           Expanded(
             child: StreamBuilder<List<MessageModel>>(
-              stream: chatService.getChatMessages(widget.chatId),
+              stream: _messagesStream,
               builder: (context, snapshot) {
                 // Loading
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -287,7 +358,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   return Center(child: Text('Error: ${snapshot.error}'));
                 }
 
-                final messages = snapshot.data ?? [];
+                _latestLiveMessages = snapshot.data ?? const [];
+                final messages = _mergeMessages(_latestLiveMessages);
                 if (snapshot.hasData && messages.isNotEmpty) {
                   final currentUserId = FirebaseAuth.instance.currentUser!.uid;
                   final hasUnreadMessages = messages.any(
@@ -315,8 +387,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 return ListView.builder(
                   controller: _scrollController,
                   reverse: true,
-                  itemCount: messages.length,
+                  itemCount: messages.length + (_isLoadingOlder ? 1 : 0),
                   itemBuilder: (context, index) {
+                    if (index >= messages.length) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      );
+                    }
                     final message = messages[index];
                     final isMe = message.senderId ==
                         FirebaseAuth.instance.currentUser!.uid;
@@ -416,7 +500,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
+                  color: Colors.grey.withValues(alpha: 0.2),
                   spreadRadius: 1,
                   blurRadius: 3,
                   offset: const Offset(0, -1),
@@ -534,6 +618,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 child: Image.memory(
                   imageBytes,
                   fit: BoxFit.contain,
+                  cacheWidth: (MediaQuery.sizeOf(context).width *
+                          MediaQuery.devicePixelRatioOf(context))
+                      .round()
+                      .clamp(320, 1600),
                 ),
               ),
               const SizedBox(height: 16),

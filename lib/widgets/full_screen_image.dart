@@ -2,6 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:yoked_in/widgets/cloudflare_media_image.dart';
 
 void showFullScreenImage(String imageUrl, BuildContext context) {
+  // Decode at screen size instead of the original camera resolution: a full
+  // 12 MP bitmap is ~48 MB, enough to get the screen killed on its own.
+  final mediaQuery = MediaQuery.of(context);
+  final cacheWidth = (mediaQuery.size.width * mediaQuery.devicePixelRatio)
+      .round()
+      .clamp(600, 2400);
+
   Navigator.push(
     context,
     MaterialPageRoute(
@@ -27,6 +34,7 @@ void showFullScreenImage(String imageUrl, BuildContext context) {
               child: CloudflareMediaImage(
             imageUrl: imageUrl,
             fit: BoxFit.contain,
+            cacheWidth: cacheWidth,
             loading: const Center(
               child: CircularProgressIndicator(),
             ),

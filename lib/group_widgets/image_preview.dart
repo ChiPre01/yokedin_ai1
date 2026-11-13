@@ -60,6 +60,10 @@ class _ImagePreviewDialogState extends State<ImagePreviewDialog> {
                     snapshot.data!,
                     height: 250,
                     fit: BoxFit.contain,
+                    cacheWidth: (MediaQuery.sizeOf(context).width *
+                            MediaQuery.devicePixelRatioOf(context))
+                        .round()
+                        .clamp(320, 1600),
                   ),
                 );
               },

@@ -36,6 +36,10 @@ class ViewUserProfileScreen extends StatelessWidget {
           DateTime? joined;
           if (createdAt is Timestamp) joined = createdAt.toDate();
           final cloudflare = photoUrl.isNotEmpty && _isCloudflareUrl(photoUrl);
+          // The avatar is 128 px across; decoding the original photo for it
+          // costs megabytes per visit.
+          final avatarCacheWidth =
+              (128 * MediaQuery.devicePixelRatioOf(context)).round().clamp(32, 512);
 
           return Center(
             child: SingleChildScrollView(
@@ -65,6 +69,7 @@ class ViewUserProfileScreen extends StatelessWidget {
                                     width: 128,
                                     height: 128,
                                     fit: BoxFit.cover,
+                                    cacheWidth: avatarCacheWidth,
                                     errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 58, color: Colors.grey),
                                   ),
                       ),

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:yoked_in/ai/config/ai_config.dart';
 import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 import 'package:yoked_in/ai/services/meeting_minutes_service.dart';
+import 'package:yoked_in/services/network_http_client.dart';
 
 final geminiServiceProvider = Provider<GeminiService>((ref) {
   final minutesService = ref.watch(meetingMinutesServiceProvider);
@@ -19,7 +20,7 @@ class GeminiService {
     required MeetingMinutesService minutesService,
     http.Client? client,
   })  : _minutesService = minutesService,
-        _client = client ?? http.Client();
+        _client = client ?? workerHttpClient;
 
   /// Headers for the Google Gemini Interactions API
   /// Whitelisted by Google CORS gateway (content-type, x-goog-api-key)

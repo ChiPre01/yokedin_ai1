@@ -207,36 +207,45 @@ class FirebaseServices {
   }
 
   Future<void> signOut() async {
-    try {
-      final User? user = _auth.currentUser;
+    final User? user = _auth.currentUser;
 
-      if (user != null) {
-        try {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .update({
-                'isOnline': false,
-                'lastSeen': FieldValue.serverTimestamp(),
-              });
-        } catch (e) {
-          debugPrint(
-            '[GOOGLE AUTH] Could not update offline status: $e',
-          );
-        }
+    if (user != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({
+              'isOnline': false,
+              'lastSeen': FieldValue.serverTimestamp(),
+            })
+            .timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint(
+          '[GOOGLE AUTH] Could not update offline status: $e',
+        );
       }
-
-      if (!kIsWeb) {
-        await _googleSignIn.signOut();
-      }
-
-      await _auth.signOut();
-
-      debugPrint('[GOOGLE AUTH] Sign-out completed.');
-    } catch (e, stackTrace) {
-      debugPrint('[GOOGLE AUTH] Sign-out failed: $e');
-      debugPrintStack(stackTrace: stackTrace);
-      rethrow;
     }
+
+    // Only touch Google Sign-In for accounts that actually used it. For
+    // email/password users this call can fail or hang (Play Services missing,
+    // no credential state), which used to abort the whole logout before
+    // Firebase Auth was ever signed out.
+    final usedGoogle = user?.providerData.any(
+          (provider) => provider.providerId == 'google.com',
+        ) ??
+        false;
+
+    if (!kIsWeb && usedGoogle) {
+      try {
+        await _googleSignIn.signOut().timeout(const Duration(seconds: 3));
+      } catch (e) {
+        debugPrint('[GOOGLE AUTH] Google sign-out skipped: $e');
+      }
+    }
+
+    // This is the sign-out the user asked for and must always run.
+    await _auth.signOut();
+
+    debugPrint('[GOOGLE AUTH] Sign-out completed.');
   }
 }

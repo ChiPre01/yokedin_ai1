@@ -19,6 +19,7 @@ class AIConfig {
   static const String summarizeChatPath = "/ai/summarize-chat";
   static const String generateMinutesPath = "/ai/generate-meeting-minutes";
   static const String smartRepliesPath = "/ai/smart-replies";
+  static const String transcribePath = "/ai/transcribe";
 
   /// Provider label used in AI copy.
   static const String aiProviderName = "Groq AI";
@@ -31,11 +32,20 @@ class AIConfig {
   /// Must match MAX_INPUT_CHARS in cloudflare/worker/src/index.js.
   static const int maxTranscriptCharacters = 16000;
 
+  /// A saved call transcript may be much longer than the manual-notes
+  /// ceiling; the Worker condenses it in sections before the minutes prompt.
+  /// Must match MAX_CALL_TRANSCRIPT_CHARS in cloudflare/worker/src/index.js.
+  static const int maxCallTranscriptCharacters = 120000;
+
   /// Client-side call ceilings. The Worker applies its own, shorter provider
   /// timeouts, so a loading indicator can never spin indefinitely.
   static const Duration minutesCallTimeout = Duration(seconds: 100);
   static const Duration summaryCallTimeout = Duration(seconds: 60);
   static const Duration smartRepliesCallTimeout = Duration(seconds: 40);
+
+  /// One recording part is transcribed server-side with its own provider
+  /// timeout; this ceiling only bounds the client wait.
+  static const Duration transcriptionCallTimeout = Duration(seconds: 120);
 
   /// Extra grace added on top of a call timeout before the client gives up.
   static const Duration callTimeoutGrace = Duration(seconds: 5);

@@ -88,6 +88,14 @@ class MeetingMinutesModel {
   final List<ActionItemModel> actionItems;
   final List<TranscriptSegmentModel> rawTranscript;
 
+  /// The shared meeting recording these minutes were built from, when they
+  /// came from a call rather than pasted notes.
+  final String? meetingId;
+
+  /// Accounts that removed these minutes from their own list. Deleting is
+  /// per-account so one participant's action never removes another's copy.
+  final List<String> hiddenFor;
+
   MeetingMinutesModel({
     required this.id,
     required this.conversationId,
@@ -101,6 +109,8 @@ class MeetingMinutesModel {
     this.keyDecisions = const [],
     this.actionItems = const [],
     this.rawTranscript = const [],
+    this.meetingId,
+    this.hiddenFor = const [],
   });
 
   Map<String, dynamic> toMap() {
@@ -116,6 +126,8 @@ class MeetingMinutesModel {
       'keyDecisions': keyDecisions,
       'actionItems': actionItems.map((item) => item.toMap()).toList(),
       'rawTranscript': rawTranscript.map((segment) => segment.toMap()).toList(),
+      'meetingId': meetingId,
+      'hiddenFor': hiddenFor,
     };
   }
 
@@ -159,6 +171,11 @@ class MeetingMinutesModel {
             ?.map((key, value) => MapEntry(key.toString(), value.toString())) ??
         {};
 
+    final hiddenForList = (map['hiddenFor'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        [];
+
     return MeetingMinutesModel(
       id: docId,
       conversationId: map['conversationId'] as String? ?? '',
@@ -172,6 +189,8 @@ class MeetingMinutesModel {
       keyDecisions: decisionsList,
       actionItems: actionItemsList,
       rawTranscript: transcriptList,
+      meetingId: map['meetingId']?.toString(),
+      hiddenFor: hiddenForList,
     );
   }
 

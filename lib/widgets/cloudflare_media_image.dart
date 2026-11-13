@@ -10,6 +10,7 @@ class CloudflareMediaImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.width,
     this.height,
+    this.cacheWidth,
     this.loading,
     this.error,
   });
@@ -18,6 +19,11 @@ class CloudflareMediaImage extends StatefulWidget {
   final BoxFit fit;
   final double? width;
   final double? height;
+
+  /// Maximum decoded width in physical pixels. Without it every photo is
+  /// decoded at its original camera resolution (a 12 MP photo is ~48 MB in
+  /// memory), which is what makes a photo-heavy chat run out of memory.
+  final int? cacheWidth;
   final Widget? loading;
   final Widget? error;
 
@@ -49,8 +55,25 @@ class _CloudflareMediaImageState extends State<CloudflareMediaImage> {
         CloudflareMediaService.instance.downloadMedia(widget.imageUrl);
   }
 
+  /// Decode bound for this image, in physical pixels.
+  int _decodeWidth(BuildContext context) {
+    final explicit = widget.cacheWidth;
+    if (explicit != null && explicit > 0) return explicit;
+
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final logical = (widget.width != null && widget.width! > 0)
+        ? widget.width!
+        : MediaQuery.sizeOf(context).width;
+
+    final pixels = (logical * pixelRatio).round();
+    if (pixels < 64) return 64;
+    // A single bubble never needs more than a 1600 px decode.
+    return pixels > 1600 ? 1600 : pixels;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final decodeWidth = _decodeWidth(context);
     final cachedBytes =
         CloudflareMediaService.instance.getCachedImage(widget.imageUrl);
     if (cachedBytes != null) {
@@ -59,6 +82,7 @@ class _CloudflareMediaImageState extends State<CloudflareMediaImage> {
         fit: widget.fit,
         width: widget.width,
         height: widget.height,
+        cacheWidth: decodeWidth,
         gaplessPlayback: true,
         errorBuilder: (context, error, stackTrace) => widget.error ??
             const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
@@ -99,6 +123,7 @@ class _CloudflareMediaImageState extends State<CloudflareMediaImage> {
           fit: widget.fit,
           width: widget.width,
           height: widget.height,
+          cacheWidth: decodeWidth,
           gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
             return widget.error ??

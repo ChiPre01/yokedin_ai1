@@ -162,6 +162,10 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                       width: 100,
                       height: 100,
                       fit: BoxFit.cover,
+                      cacheWidth: (100 *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round()
+                          .clamp(64, 512),
                     ),
                   ),
                 );

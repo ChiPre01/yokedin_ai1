@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:yoked_in/calls/call_recording_models.dart';
 import 'package:yoked_in/chat/user_model.dart';
 import 'package:yoked_in/group_chat/group_chat_model.dart';
 import 'package:yoked_in/provider/group_chat_provider.dart';
@@ -89,7 +90,13 @@ class _GroupCallButtonState extends ConsumerState<GroupCallButton> {
       notificationMessage: widget.isVideoCall
           ? '$userName video calling...'
           : '$userName audio calling...',
-      customData: widget.group.groupName, // ✅ Add this line
+      // Carries the group id to every device so a recording made during the
+      // call can be linked to this group's minutes.
+      customData: CallConversationInfo(
+        conversationId: widget.group.groupId,
+        conversationType: 'group',
+        title: widget.group.groupName,
+      ).toCustomData(),
       // ✅ Add this to override the caller display
       onPressed: (code, message, errorInvitees) async {
         if (code.isEmpty) {

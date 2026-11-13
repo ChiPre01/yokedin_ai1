@@ -1,10 +1,16 @@
 const FIREBASE_PROJECT_ID = "yokedin-806c2";
 
+// Voice notes used to be capped at 5 MB, which is far too small for call audio.
+// Voice and audio now share one ceiling instead of voice having its own, lower
+// limit. It stays bounded because the Worker buffers the whole body in memory
+// and the speech-to-text provider rejects files above 25 MB.
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
 const SIZE_LIMITS = {
   image: 25 * 1024 * 1024,
   video: 25 * 1024 * 1024,
-  voice: 5 * 1024 * 1024,
-  audio: 10 * 1024 * 1024,
+  voice: MAX_AUDIO_BYTES,
+  audio: MAX_AUDIO_BYTES,
   document: 10 * 1024 * 1024,
 };
 
@@ -12,7 +18,9 @@ const EXPIRY_MS = {
   image: null,
   video: 24 * 60 * 60 * 1000,
   voice: 72 * 60 * 60 * 1000,
-  audio: 72 * 60 * 60 * 1000,
+  // Call recordings are transcribed into Firestore, so their audio expires a
+  // day after the call even if the app never gets a chance to delete it.
+  audio: 24 * 60 * 60 * 1000,
   document: 72 * 60 * 60 * 1000,
 };
 
@@ -325,7 +333,24 @@ const AI_TIMEOUTS = {
   minutes: 30000,
   summary: 20000,
   replies: 12000,
+  transcribe: 90000,
+  transcriptSection: 25000,
 };
+
+// Speech-to-text. Groq accepts flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm and a
+// single audio track, so call recordings are captured as audio-only MP4 and
+// uploaded as m4a. Raw ADTS AAC is NOT an accepted input format.
+const GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+const GROQ_STT_MODEL = "whisper-large-v3";
+const MAX_STT_BYTES = 25 * 1024 * 1024;
+
+// A recorded call transcript is much longer than the minutes prompt budget, so
+// it is condensed section by section before the minutes prompt sees it.
+const MAX_CALL_TRANSCRIPT_CHARS = 120000;
+const TRANSCRIPT_SECTION_CHARS = 14000;
+const MAX_TRANSCRIPT_SECTIONS = 10;
+const TRANSCRIPT_SECTION_CONCURRENCY = 3;
+const STT_RETRYABLE_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 
 class AiError extends Error {
   constructor(code, message, status, retryAfterSeconds = null) {
@@ -576,7 +601,7 @@ async function requestGroqCompletion(env, options) {
   let useFallbackFormat = false;
 
   for (let attempt = 1; attempt <= GROQ_MAX_ATTEMPTS; attempt += 1) {
-    const body = { ...baseBody };
+    const body = /** @type {Record<string, any>} */ ({ ...baseBody });
     if (options.schema) {
       body.response_format = useFallbackFormat
         ? { type: "json_object" }
@@ -1061,19 +1086,33 @@ async function handleGenerateMinutes(request, env, user, token, cors) {
   const body = await readAiJsonBody(request);
   const { conversationId, conversationType } = readConversation(body);
 
-  const rawContent = typeof body.rawContent === "string" ? body.rawContent.trim() : "";
-  if (!rawContent) {
+  const manualNotes =
+    typeof body.rawContent === "string" ? body.rawContent.trim() : "";
+
+  // A saved call transcript can be far longer than one prompt, so it is
+  // condensed section by section instead of being rejected or truncated.
+  const callTranscript =
+    typeof body.transcript === "string" ? body.transcript.trim() : "";
+
+  if (!manualNotes && !callTranscript) {
     throw new AiError(
       "INVALID_REQUEST",
       "Conversation notes are required to generate minutes.",
       400
     );
   }
-  if (rawContent.length > MAX_INPUT_CHARS) {
+  if (manualNotes.length > MAX_INPUT_CHARS) {
     throw new AiError(
       "INVALID_REQUEST",
-      `The notes are too long (${rawContent.length} of ${MAX_INPUT_CHARS} characters allowed).`,
+      `The notes are too long (${manualNotes.length} of ${MAX_INPUT_CHARS} characters allowed).`,
       400
+    );
+  }
+  if (callTranscript.length > MAX_CALL_TRANSCRIPT_CHARS) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      `This transcript is too long (${callTranscript.length} of ${MAX_CALL_TRANSCRIPT_CHARS} characters allowed).`,
+      413
     );
   }
 
@@ -1083,6 +1122,21 @@ async function handleGenerateMinutes(request, env, user, token, cors) {
 
   await authorizeConversation(conversationId, conversationType, user, token);
   await enforceAiRateLimit(env, user.sub);
+
+  // Manual notes keep their existing behaviour; a transcript replaces them.
+  let rawContent = manualNotes;
+  let condensedFromTranscript = false;
+
+  if (!rawContent && callTranscript) {
+    rawContent = callTranscript;
+    if (callTranscript.length > MAX_INPUT_CHARS) {
+      rawContent = (await condenseTranscript(env, callTranscript)).slice(
+        0,
+        MAX_INPUT_CHARS
+      );
+      condensedFromTranscript = true;
+    }
+  }
 
   const content = await requestGroqCompletion(env, {
     systemPrompt: MINUTES_SYSTEM_PROMPT,
@@ -1152,6 +1206,355 @@ async function handleSmartReplies(request, env, user, token, cors) {
   );
 }
 
+function readGroqApiKey(env) {
+  const apiKey =
+    typeof env?.GROQ_API_KEY === "string" ? env.GROQ_API_KEY.trim() : "";
+  if (!apiKey) {
+    throw new AiError(
+      "AI_NOT_CONFIGURED",
+      "AI is not configured on the server yet. Please contact the project owner.",
+      503
+    );
+  }
+  return apiKey;
+}
+
+/**
+ * Shapes a Groq verbose_json transcription into the small payload the app
+ * stores. Text is never logged here.
+ */
+function normalizeTranscription(payload) {
+  const text = clampText(payload?.text, 200000);
+
+  const segments = Array.isArray(payload?.segments)
+    ? payload.segments
+        .filter((segment) => segment && typeof segment === "object")
+        .map((segment) => {
+          const start = Number(segment.start);
+          const end = Number(segment.end);
+          return {
+            start: Number.isFinite(start) ? Math.max(0, start) : 0,
+            end: Number.isFinite(end) ? Math.max(0, end) : 0,
+            text: clampText(segment.text, 4000),
+          };
+        })
+        .filter((segment) => segment.text)
+        .slice(0, 5000)
+    : [];
+
+  const reportedDuration = Number(payload?.duration);
+  const durationSeconds = Number.isFinite(reportedDuration) && reportedDuration > 0
+    ? reportedDuration
+    : segments.length > 0
+      ? segments[segments.length - 1].end
+      : 0;
+
+  return {
+    text,
+    segments,
+    durationSeconds: Math.round(durationSeconds * 100) / 100,
+    language: clampText(payload?.language, 20) || null,
+  };
+}
+
+/**
+ * Sends one audio chunk to Groq's speech-to-text endpoint with a bounded
+ * timeout and at most one retry. The provider key stays server-side.
+ */
+async function requestGroqTranscription(
+  env,
+  { bytes, contentType, fileName, language }
+) {
+  const apiKey = readGroqApiKey(env);
+
+  for (let attempt = 1; attempt <= GROQ_MAX_ATTEMPTS; attempt += 1) {
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: contentType }), fileName);
+    form.append("model", GROQ_STT_MODEL);
+    form.append("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "segment");
+    if (language) form.append("language", language);
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      AI_TIMEOUTS.transcribe
+    );
+    let response;
+
+    try {
+      response = await fetch(GROQ_STT_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new AiError(
+          "AI_TIMEOUT",
+          "The transcription took too long. Please try again.",
+          504
+        );
+      }
+      console.error(`Groq transcription request failed (attempt ${attempt}).`);
+      if (attempt >= GROQ_MAX_ATTEMPTS) {
+        throw new AiError(
+          "AI_SERVICE_UNAVAILABLE",
+          "The transcription service is temporarily unavailable. Please try again.",
+          503
+        );
+      }
+      await sleep(retryDelayMs({ headers: new Headers() }, attempt));
+      continue;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      logGroqRateLimits(response, response.status);
+      console.error(
+        `Groq transcription responded ${response.status} (attempt ${attempt}).`
+      );
+
+      if (
+        STT_RETRYABLE_STATUS.has(response.status) &&
+        attempt < GROQ_MAX_ATTEMPTS
+      ) {
+        await sleep(retryDelayMs(response, attempt));
+        continue;
+      }
+
+      // Transcription-specific copy: the generic mapper talks about
+      // conversations being too long, which is misleading for audio.
+      if (response.status === 413) {
+        throw new AiError(
+          "INVALID_REQUEST",
+          "This recording part is too large for the transcription service.",
+          413
+        );
+      }
+      if (response.status === 400 || response.status === 422) {
+        throw new AiError(
+          "INVALID_REQUEST",
+          "The transcription service rejected this audio file.",
+          502
+        );
+      }
+
+      const retryAfter = Number(response.headers.get("retry-after"));
+      throw mapGroqStatus(
+        response.status,
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null
+      );
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      console.error("Groq transcription returned a body that was not JSON.");
+      throw new AiError(
+        "BAD_AI_RESPONSE",
+        "The transcription service returned an unreadable response. Please try again.",
+        502
+      );
+    }
+
+    const transcription = normalizeTranscription(data);
+    if (!transcription.text && transcription.segments.length === 0) {
+      throw new AiError(
+        "BAD_AI_RESPONSE",
+        "No speech could be recognised in this recording.",
+        502
+      );
+    }
+
+    return transcription;
+  }
+
+  throw new AiError(
+    "AI_SERVICE_UNAVAILABLE",
+    "The transcription service is temporarily unavailable. Please try again.",
+    503
+  );
+}
+
+/**
+ * Transcribes one uploaded recording chunk.
+ *
+ * The audio stays in R2 after this call: the client deletes it only once every
+ * chunk is transcribed and the assembled transcript is saved in Firestore.
+ * A repeated request for the same chunk is harmless; it returns the same text
+ * and the client stores it against a stable chunk id, so no duplicate
+ * transcript entries are produced.
+ */
+async function handleTranscribeRecording(request, env, user, token, cors) {
+  const body = await readAiJsonBody(request);
+  const { conversationId, conversationType } = readConversation(body);
+
+  const mediaKey = clampText(body.mediaKey, 320);
+  if (!mediaKey || mediaKey.length > 300 || mediaKey.includes("\\")) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "A valid media key is required.",
+      400
+    );
+  }
+
+  // Ownership first: a caller may only transcribe their own upload.
+  if (!mediaKey.startsWith(`${user.sub}/`)) {
+    throw new AiError(
+      "FORBIDDEN",
+      "You can only transcribe your own recordings.",
+      403
+    );
+  }
+
+  const chunkIndex = Number(body.chunkIndex ?? 0);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 10000) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "chunkIndex must be a non-negative integer.",
+      400
+    );
+  }
+
+  const language = clampText(body.language, 12).toLowerCase();
+
+  await authorizeConversation(conversationId, conversationType, user, token);
+  await enforceAiRateLimit(env, user.sub);
+
+  const object = await env.MEDIA_BUCKET.get(mediaKey);
+  if (!object) {
+    throw new AiError(
+      "MEDIA_NOT_FOUND",
+      "The uploaded recording could not be found. Please upload it again.",
+      404
+    );
+  }
+
+  const contentType = (object.httpMetadata?.contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+
+  if (!contentType.startsWith("audio/")) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "Only audio recordings can be transcribed.",
+      415
+    );
+  }
+
+  const size = Number(object.size) || 0;
+  if (size <= 0 || size > MAX_STT_BYTES) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      `Each recording part must be between 1 byte and ${Math.floor(
+        MAX_STT_BYTES / 1024 / 1024
+      )} MB.`,
+      413
+    );
+  }
+
+  const bytes = await object.arrayBuffer();
+  const extensionMatch = mediaKey.match(/\.([a-zA-Z0-9]{1,10})$/);
+  const fileName = `recording.${extensionMatch ? extensionMatch[1].toLowerCase() : "m4a"}`;
+
+  const transcription = await requestGroqTranscription(env, {
+    bytes,
+    contentType,
+    fileName,
+    language: language || null,
+  });
+
+  return responseJson(
+    {
+      provider: "groq",
+      model: GROQ_STT_MODEL,
+      chunkIndex,
+      ...transcription,
+    },
+    200,
+    cors
+  );
+}
+
+const TRANSCRIPT_NOTES_SYSTEM_PROMPT = [
+  "You condense one section of a call transcript into factual notes.",
+  "Return plain text only: no markdown, no headings, no JSON.",
+  "Keep names, numbers, dates, decisions, action items and deadlines exactly as stated.",
+  "Keep the order of the discussion and mark the speaker when the transcript names one.",
+  "Never invent anything that is not in the section.",
+  "Keep the language of the transcript.",
+].join("\n");
+
+/** Splits a transcript into sections near a line boundary. */
+function splitTranscriptSections(transcript) {
+  const sections = [];
+  let rest = transcript;
+
+  while (rest.length > 0 && sections.length < MAX_TRANSCRIPT_SECTIONS) {
+    if (rest.length <= TRANSCRIPT_SECTION_CHARS) {
+      sections.push(rest);
+      break;
+    }
+
+    let cut = rest.lastIndexOf("\n", TRANSCRIPT_SECTION_CHARS);
+    if (cut < TRANSCRIPT_SECTION_CHARS * 0.6) {
+      cut = rest.lastIndexOf(". ", TRANSCRIPT_SECTION_CHARS);
+    }
+    if (cut < TRANSCRIPT_SECTION_CHARS * 0.6) {
+      cut = TRANSCRIPT_SECTION_CHARS;
+    }
+
+    sections.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+
+  return sections;
+}
+
+/**
+ * Condenses a long call transcript into notes that fit the minutes prompt.
+ * Sections run with bounded concurrency; order is preserved because results
+ * are written back by index.
+ */
+async function condenseTranscript(env, transcript) {
+  const sections = splitTranscriptSections(transcript);
+  const notes = new Array(sections.length).fill("");
+
+  for (
+    let start = 0;
+    start < sections.length;
+    start += TRANSCRIPT_SECTION_CONCURRENCY
+  ) {
+    const batch = sections.slice(start, start + TRANSCRIPT_SECTION_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((section, offset) =>
+        requestGroqCompletion(env, {
+          systemPrompt: TRANSCRIPT_NOTES_SYSTEM_PROMPT,
+          userPrompt: `Call transcript section ${start + offset + 1} of ${
+            sections.length
+          }:\n\n${section}`,
+          schema: null,
+          schemaName: null,
+          temperature: 0.2,
+          maxCompletionTokens: 900,
+          timeoutMs: AI_TIMEOUTS.transcriptSection,
+        })
+      )
+    );
+
+    results.forEach((result, offset) => {
+      notes[start + offset] = result;
+    });
+  }
+
+  return notes.filter(Boolean).join("\n\n");
+}
+
 function aiErrorResponse(error, cors) {
   if (error instanceof AiError) {
     return responseJson(
@@ -1205,6 +1608,8 @@ async function handleAiRoute(request, env, user, token, url, cors) {
         return await handleGenerateMinutes(request, env, user, token, cors);
       case "/ai/smart-replies":
         return await handleSmartReplies(request, env, user, token, cors);
+      case "/ai/transcribe":
+        return await handleTranscribeRecording(request, env, user, token, cors);
       default:
         return responseJson(
           {

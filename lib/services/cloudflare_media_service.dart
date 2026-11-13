@@ -1,11 +1,12 @@
 
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:yoked_in/services/network_http_client.dart';
 
 /// Handles authenticated media uploads, downloads and deletions
 /// through the YokedIn Cloudflare Worker.
@@ -21,11 +22,23 @@ class CloudflareMediaService {
   /// Retained for compatibility with existing code.
   static const int maxFileSize = 25 * 1024 * 1024;
 
+  /// Mirrors SIZE_LIMITS in the Worker. Call recordings upload as `audio` and
+  /// are capped at 25 MB per part, which is also the speech-to-text ceiling.
   static const Map<String, int> _sizeLimits = {
     'image': 25 * 1024 * 1024,
+    'video': 25 * 1024 * 1024,
+    'voice': 25 * 1024 * 1024,
+    'audio': 25 * 1024 * 1024,
+    'document': 10 * 1024 * 1024,
   };
 
   static const Duration requestTimeout = Duration(seconds: 60);
+
+  /// Shown when the device cannot open a connection to the Worker at all,
+  /// which is a network problem rather than a rejected upload.
+  static const String _unreachableMessage =
+      'Cannot reach the media server. Check your internet connection '
+      'and try again.';
 
   // Keep recently downloaded images in memory so navigation between pages
   // does not trigger another authenticated download and progress indicator.
@@ -190,6 +203,7 @@ class CloudflareMediaService {
     String? chatId,
     String? groupId,
     String? category,
+    String? contentTypeOverride,
   }) async {
     if (!['profile', 'chat', 'group'].contains(purpose)) {
       throw CloudflareMediaException('Invalid media purpose.');
@@ -221,11 +235,14 @@ class CloudflareMediaService {
       );
     }
 
-    final contentType = _getContentType(file.name);
+    // A call recording part is an audio-only MP4 file whose name ends in
+    // `.mp4`, so the MIME type must be supplied explicitly: deriving it from
+    // the extension would classify it as video.
+    final contentType = contentTypeOverride ?? _getContentType(file.name);
     final inferredCategory = _inferCategory(contentType);
     final mediaCategory = category ?? inferredCategory;
 
-    if (mediaCategory != 'image') {
+    if (!_sizeLimits.containsKey(mediaCategory)) {
       throw CloudflareMediaException('Invalid media category.');
     }
 
@@ -274,8 +291,15 @@ class CloudflareMediaService {
 
     request.bodyBytes = bytes;
 
-    final streamedResponse =
-        await request.send().timeout(requestTimeout);
+    final http.StreamedResponse streamedResponse;
+
+    try {
+      streamedResponse =
+          await workerHttpClient.send(request).timeout(requestTimeout);
+    } on http.ClientException catch (error) {
+      debugPrint('[MEDIA] Upload connection failed: $error');
+      throw CloudflareMediaException(_unreachableMessage);
+    }
 
     final response = await http.Response.fromStream(
       streamedResponse,
@@ -349,10 +373,17 @@ class CloudflareMediaService {
 
   Future<Uint8List> _downloadUncached(Uri uri, String cacheKey) async {
     final token = await _getAuthToken();
-    final response = await http.get(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(requestTimeout);
+    final http.Response response;
+
+    try {
+      response = await workerHttpClient.get(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(requestTimeout);
+    } on http.ClientException catch (error) {
+      debugPrint('[MEDIA] Download connection failed: $error');
+      throw CloudflareMediaException(_unreachableMessage);
+    }
 
     if (response.statusCode == 410) {
       throw CloudflareMediaException('This media has expired.');
@@ -386,10 +417,17 @@ class CloudflareMediaService {
 
     final uri = Uri.parse('$baseUrl/media/$key');
 
-    final response = await http.delete(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(requestTimeout);
+    final http.Response response;
+
+    try {
+      response = await workerHttpClient.delete(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(requestTimeout);
+    } on http.ClientException catch (error) {
+      debugPrint('[MEDIA] Delete connection failed: $error');
+      throw CloudflareMediaException(_unreachableMessage);
+    }
 
     if (response.statusCode != 200) {
       String message =

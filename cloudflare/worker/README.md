@@ -19,9 +19,46 @@ rules, and scheduled cleanup remain in `src/index.js`.
 | `/ai/summarize-chat` | POST | Firebase ID token | Caller must belong to the private chat or group |
 | `/ai/generate-meeting-minutes` | POST | Firebase ID token | Caller must belong to the private chat or group |
 | `/ai/smart-replies` | POST | Firebase ID token | Caller must belong to the private chat or group |
+| `/ai/transcribe` | POST | Firebase ID token | Reads the caller's own recording from R2 and returns its transcript |
 
 AI endpoints accept JSON only. Request bodies are limited to 64 KB. AI
-endpoints do not access `MEDIA_BUCKET` and do not write to Firestore.
+endpoints do not write to Firestore. `/ai/transcribe` is the one AI route that
+reads from `MEDIA_BUCKET`; it never writes to it and never deletes anything.
+
+## Call recording transcription
+
+```json
+{
+  "mediaKey": "<uid>/<uuid>.mp4",
+  "chunkIndex": 0,
+  "conversationId": "...",
+  "conversationType": "private",
+  "language": "en"
+}
+```
+
+`POST /ai/transcribe` requires a `mediaKey` that starts with the caller's own
+UID, an existing object no larger than 25 MB with an `audio/*` content type,
+and membership of the conversation. It sends the audio to Groq's
+`/openai/v1/audio/transcriptions` endpoint with `whisper-large-v3` and
+`verbose_json` (segment timestamps) and returns `text`, `segments` and
+`durationSeconds`.
+
+Groq accepts flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav and webm. Raw ADTS
+`.aac` is **not** accepted, which is why call recordings are captured as
+audio-only MP4.
+
+The Worker never deletes the audio. The Flutter client deletes each object
+through the existing owner-checked `DELETE /media/<key>` route, and only after
+every part is transcribed and the assembled transcript has been read back from
+Firestore. The existing 72-hour `audio`/`voice` expiry and the */5 cleanup cron
+remain the backstop for anything left behind.
+
+`POST /ai/generate-meeting-minutes` also accepts `transcript` instead of
+`rawContent`. A transcript may be up to 120,000 characters: above the 16,000
+character prompt budget it is condensed section by section (max 10 sections,
+3 at a time) before the minutes prompt runs, so long calls are summarised
+instead of rejected or truncated.
 
 ## AI request bodies
 
@@ -48,8 +85,9 @@ and `messages` must contain 1–30 message strings.
 }
 ```
 
-`POST /ai/generate-meeting-minutes` requires non-empty `rawContent` of at most
-16,000 characters. `participantNames` and `durationSeconds` are optional.
+`POST /ai/generate-meeting-minutes` requires either non-empty `rawContent` of
+at most 16,000 characters, or a saved call `transcript` of at most 120,000
+characters. `participantNames` and `durationSeconds` are optional.
 
 ```json
 {

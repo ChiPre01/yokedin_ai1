@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:yoked_in/chat/user_model.dart';
@@ -115,28 +116,41 @@ final availableMembersProvider = FutureProvider.family<List<UserModel>, String>(
     final group = GroupModel.fromMap(groupDoc.data()!);
     final chatService = ref.read(groupChatServiceProvider);
 
-    // Fetch all users
+    // One friendship query instead of one read per account: the previous loop
+    // issued a separate Firestore request for every user in the database.
+    final friendIds = <String>{};
+    try {
+      final friendships = await FirebaseFirestore.instance
+          .collection('friendships')
+          .where('participants', arrayContains: chatService.currentUserId)
+          .get();
+      for (final doc in friendships.docs) {
+        final participants = doc.data()['participants'];
+        if (participants is List) {
+          friendIds.addAll(participants.map((value) => value.toString()));
+        }
+      }
+    } catch (error) {
+      debugPrint('Available group members: friendship lookup failed: $error');
+    }
+    friendIds.remove(chatService.currentUserId);
+
     final usersSnapshot = await FirebaseFirestore.instance
         .collection('users')
         .get();
 
-    final allUsers = usersSnapshot.docs
+    // Only friends who are not already members, sorted so the picker is stable.
+    final availableUsers = usersSnapshot.docs
         .map((doc) => UserModel.fromMap(doc.data()))
-        .toList();
-
-    // Filter: only friends who are not already members
-    final availableUsers = <UserModel>[];
-    for (final user in allUsers) {
-      if (!group.members.contains(user.uid)) {
-        final areFriends = await chatService.areUsersFriends(
-          chatService.currentUserId,
-          user.uid,
-        );
-        if (areFriends) {
-          availableUsers.add(user);
-        }
-      }
-    }
+        .where(
+          (user) =>
+              !group.members.contains(user.uid) &&
+              friendIds.contains(user.uid),
+        )
+        .toList()
+      ..sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
 
     return availableUsers;
   },

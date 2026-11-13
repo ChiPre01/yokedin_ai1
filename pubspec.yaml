@@ -30,7 +30,6 @@ environment:
 dependencies:
   cherry_toast: ^1.13.0
   cloud_firestore: ^6.8.0
-  cloud_functions: ^6.5.1
   cupertino_icons: ^1.0.8
   file_picker: ^10.3.8
   file_saver: ^0.7.0
@@ -53,6 +52,7 @@ dependencies:
   record: ^7.1.2
   uuid: ^4.6.0
   video_player: ^2.14.1
+  zego_express_engine: ^3.25.0
   zego_uikit: ^2.29.1
   zego_uikit_prebuilt_call: ^4.24.4
   zego_uikit_signaling_plugin: ^2.8.21

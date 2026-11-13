@@ -386,7 +386,7 @@ class ChatService {
         .collection('chats')
         .where('participants', arrayContains: currentUserId)
         .orderBy('lastMessageTime', descending: true)
-        .limit(10) // Limit initial chat load
+        .limit(30) // Initial chat load; the list is no longer cut at 10 chats.
         .snapshots()
         .map((snapshot) {
           final docs = snapshot.docs
@@ -398,7 +398,7 @@ class ChatService {
 
   Stream<List<MessageModel>> getChatMessages(
     String chatId, {
-    int limit = 20, // Reduce from 50 to 20
+    int limit = 30,
     DocumentSnapshot? lastDocument,
   }) {
     Query query = _firestore
@@ -417,9 +417,31 @@ class ChatService {
             (doc) => MessageModel.fromMap(doc.data() as Map<String, dynamic>),
           )
           .toList();
-      print("sizeofdocs2 ${docs.length}");
       return docs;
     });
+  }
+
+  /// One page of messages older than [before], newest first.
+  ///
+  /// The live stream above only carries the newest page. Older pages are read
+  /// on demand when the user scrolls up, so an old conversation never loads
+  /// hundreds of messages (and images) at once.
+  Future<List<MessageModel>> loadOlderMessages(
+    String chatId, {
+    required DateTime before,
+    int limit = 30,
+  }) async {
+    final snapshot = await _firestore
+        .collection('messages')
+        .where('chatId', isEqualTo: chatId)
+        .where('timestamp', isLessThan: Timestamp.fromDate(before))
+        .orderBy('timestamp', descending: true)
+        .limit(limit)
+        .get();
+
+    return snapshot.docs
+        .map((doc) => MessageModel.fromMap(doc.data()))
+        .toList();
   }
 
   // Unfriend user
@@ -522,7 +544,6 @@ class ChatService {
           }
         }
       });
-      print("sizeofdocs3 ${result.length}");
 
       return result;
     });

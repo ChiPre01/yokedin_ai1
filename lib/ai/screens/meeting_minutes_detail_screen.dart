@@ -82,6 +82,8 @@ class _MeetingMinutesDetailScreenState
         keyDecisions: _currentMinute.keyDecisions,
         actionItems: updatedList,
         rawTranscript: _currentMinute.rawTranscript,
+        meetingId: _currentMinute.meetingId,
+        hiddenFor: _currentMinute.hiddenFor,
       );
     });
 
@@ -100,9 +102,10 @@ class _MeetingMinutesDetailScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Minutes'),
+        title: const Text('Remove Minutes'),
         content: const Text(
-          'Are you sure you want to delete these meeting minutes? This cannot be undone.',
+          'Remove these minutes from your account? Other participants keep '
+          'their own copy, so nothing is deleted for them.',
         ),
         actions: [
           TextButton(
@@ -125,7 +128,7 @@ class _MeetingMinutesDetailScreenState
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Meeting minutes deleted')),
+          const SnackBar(content: Text('Minutes removed from your account')),
         );
       }
     }
