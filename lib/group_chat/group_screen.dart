@@ -39,7 +39,7 @@ class _GroupScreenState extends ConsumerState<GroupScreen> {
         backgroundColor: Colors.white,
         automaticallyImplyLeading: false,
         title: const Text(
-          'Groups',
+          'Teams',
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
         centerTitle: false,
@@ -71,12 +71,12 @@ class _GroupScreenState extends ConsumerState<GroupScreen> {
                         Icon(Icons.groups, size: 64, color: Colors.grey),
                         SizedBox(height: 16),
                         Text(
-                          'No groups yet',
+                          'No Teams yet',
                           style: TextStyle(fontSize: 18, color: Colors.grey),
                         ),
                         SizedBox(height: 8),
                         Text(
-                          'Create a group to get started',
+                          'Create a Team to get started',
                           style: TextStyle(color: Colors.grey),
                         ),
                       ],

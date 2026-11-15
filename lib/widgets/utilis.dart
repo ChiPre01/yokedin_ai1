@@ -22,6 +22,8 @@ void showAppSnackbar({
         backgroundColor: Colors.green.withAlpha(40),
         description: Text(
           description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: Colors.green),
         ),
         title: const Text(
@@ -34,7 +36,9 @@ void showAppSnackbar({
     case SnackbarType.error:
       CherryToast.error(
         toastDuration: Duration(milliseconds: 2500),
-        height: 70,
+        // Firebase error strings are long; a fixed 70 px toast with a
+        // wrapping message overflowed. Two ellipsised lines fit the taller box.
+        height: 88,
         toastPosition: Position.top,
         shadowColor: Colors.white,
         animationType: AnimationType.fromTop,
@@ -42,6 +46,8 @@ void showAppSnackbar({
         backgroundColor: Colors.red.withAlpha(40),
         description: Text(
           description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: Colors.red),
         ),
         title: const Text(

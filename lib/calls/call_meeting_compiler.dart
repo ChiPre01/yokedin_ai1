@@ -72,19 +72,25 @@ class CallMeetingCompiler {
     onProgress?.call('Writing the minutes from ${contributions.length} '
         'recording part(s)…');
 
-    final resolvedConversationId = meeting.conversationId.trim().isNotEmpty
-        ? meeting.conversationId.trim()
-        : (conversationId ?? '').trim();
+    // The screen the minutes are generated from knows the conversation, and
+    // it is authoritative: a meeting document written before its identity was
+    // stored, or with a stale type, would otherwise send a group's minutes to
+    // the private-chat permission check.
+    final requestedConversationId = (conversationId ?? '').trim();
+    final resolvedConversationId = requestedConversationId.isNotEmpty
+        ? requestedConversationId
+        : meeting.conversationId.trim();
     if (resolvedConversationId.isEmpty) {
       throw const CallMeetingException(
         'This meeting is not linked to a chat, so its minutes cannot be saved.',
       );
     }
 
-    final resolvedConversationType = meeting.conversationType.trim().isNotEmpty
-        ? meeting.conversationType.trim()
-        : ((conversationType ?? '').trim().isNotEmpty
-            ? conversationType!.trim()
+    final requestedConversationType = (conversationType ?? '').trim();
+    final resolvedConversationType = requestedConversationType.isNotEmpty
+        ? requestedConversationType
+        : (meeting.conversationType.trim().isNotEmpty
+            ? meeting.conversationType.trim()
             : 'private');
 
     final resolvedTitle = meeting.title.trim().isNotEmpty

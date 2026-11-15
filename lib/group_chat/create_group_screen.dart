@@ -41,7 +41,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
       showAppSnackbar(
         context: context,
         type: SnackbarType.error,
-        description: 'Please enter group name',
+        description: 'Please enter Team name',
       );
       return;
     }
@@ -82,7 +82,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
       showAppSnackbar(
         context: context,
         type: SnackbarType.success,
-        description: 'Group created successfully',
+        description: 'Team created successfully',
       );
     } else if (mounted) {
       showAppSnackbar(
@@ -105,7 +105,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Group'),
+        title: const Text('Create Team'),
         actions: [
           if (_isCreating)
             const Padding(
@@ -179,7 +179,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             child: TextField(
               controller: _nameController,
               decoration: const InputDecoration(
-                labelText: 'Group Name',
+                labelText: 'Team Name',
                 border: OutlineInputBorder(),
               ),
             ),

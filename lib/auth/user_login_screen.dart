@@ -5,7 +5,7 @@ import 'package:yoked_in/auth/auth_services.dart';
 import 'package:yoked_in/auth/google_login_screen.dart';
 import 'package:yoked_in/auth/sign_up_screen.dart';
 import 'package:yoked_in/helper/navigation_helper.dart';
-import 'package:yoked_in/other_screens/main_home.dart';
+import 'package:yoked_in/other_screens/home_screen.dart';
 import 'package:yoked_in/widgets/button.dart';
 import 'package:yoked_in/widgets/utilis.dart';
 
@@ -26,7 +26,7 @@ class UserLoginScreen extends ConsumerWidget {
       );
       formNotifer.setLoading(false);
       if (res == "success") {
-        NavigationHelper.pushReplacement(context, MainHomeScreen());
+        NavigationHelper.pushReplacement(context, const HomeScreen());
         // mySnackBar(message: "Successful Login.", context: context);
         showAppSnackbar(
           context: context,

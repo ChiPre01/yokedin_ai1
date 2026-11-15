@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/chat/chat_screen.dart';
 import 'package:yoked_in/chat/user_model.dart';
+import 'package:yoked_in/helper/navigation_helper.dart';
 import 'package:yoked_in/helper/time_format.dart';
+import 'package:yoked_in/other_screens/home_screen.dart';
 import 'package:yoked_in/other_screens/requests_screen.dart';
 import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/provider/user_status_provider.dart';
@@ -52,6 +54,21 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back to home',
+          onPressed: () {
+            final navigator = Navigator.of(context);
+            // The chat list is a tab inside MainHomeScreen, so popping the
+            // whole screen returns to the hub. The push is only a fallback for
+            // the case where there is nothing underneath.
+            if (navigator.canPop()) {
+              navigator.pop();
+            } else {
+              NavigationHelper.pushReplacement(context, const HomeScreen());
+            }
+          },
+        ),
         title: const Text(
           'Connections',
           style: TextStyle(fontWeight: FontWeight.w600),

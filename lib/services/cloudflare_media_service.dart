@@ -87,7 +87,7 @@ class CloudflareMediaService {
     return bytes;
   }
 
-  Future<String> _getAuthToken() async {
+  Future<String> _getAuthToken({bool forceRefresh = false}) async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
@@ -96,7 +96,7 @@ class CloudflareMediaService {
       );
     }
 
-    final token = await user.getIdToken();
+    final token = await user.getIdToken(forceRefresh);
 
     if (token == null || token.isEmpty) {
       throw CloudflareMediaException(
@@ -373,16 +373,29 @@ class CloudflareMediaService {
 
   Future<Uint8List> _downloadUncached(Uri uri, String cacheKey) async {
     final token = await _getAuthToken();
-    final http.Response response;
+    http.Response? response;
 
     try {
       response = await workerHttpClient.get(
         uri,
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(requestTimeout);
-    } on http.ClientException catch (error) {
-      debugPrint('[MEDIA] Download connection failed: $error');
+    } catch (error) {
+      // A pooled connection can be dropped by the edge while the app sits
+      // idle. Retrying once on a brand-new connection, with a refreshed
+      // token, recovers instead of leaving a broken picture on screen.
+      debugPrint('[MEDIA] Download attempt failed: $error');
+      response = await _retryDownload(uri);
+    }
+
+    if (response == null) {
       throw CloudflareMediaException(_unreachableMessage);
+    }
+
+    if (response.statusCode != 200) {
+      debugPrint(
+        '[MEDIA] Download failed (HTTP ${response.statusCode}) for $uri',
+      );
     }
 
     if (response.statusCode == 410) {
@@ -399,6 +412,25 @@ class CloudflareMediaService {
     // The app now only downloads chat media pictures through this path.
     _rememberImage(cacheKey, bytes);
     return bytes;
+  }
+
+  /// Second chance for a download that failed on the shared client.
+  Future<http.Response?> _retryDownload(Uri uri) async {
+    try {
+      final token = await _getAuthToken(forceRefresh: true);
+      final client = http.Client();
+
+      try {
+        return await client
+            .get(uri, headers: {'Authorization': 'Bearer $token'})
+            .timeout(requestTimeout);
+      } finally {
+        client.close();
+      }
+    } catch (error) {
+      debugPrint('[MEDIA] Download retry failed: $error');
+      return null;
+    }
   }
 
   /// Deletes a media object owned by the signed-in user.

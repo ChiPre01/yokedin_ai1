@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:yoked_in/auth/google_auth.dart';
 import 'package:yoked_in/auth/google_auth_service.dart';
-import 'package:yoked_in/other_screens/main_home.dart';
+import 'package:yoked_in/other_screens/home_screen.dart';
 
 class GoogleAuthNotifier extends StateNotifier<GoogleAuthState> {
   final FirebaseServices _firebaseServices;
@@ -24,7 +24,7 @@ class GoogleAuthNotifier extends StateNotifier<GoogleAuthState> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (context) => const MainHomeScreen(),
+              builder: (context) => const HomeScreen(),
             ),
           );
         }

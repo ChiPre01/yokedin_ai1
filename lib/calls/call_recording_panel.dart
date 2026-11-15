@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/ai/models/meeting_minutes_model.dart';
 import 'package:yoked_in/ai/services/groq_service.dart';
 import 'package:yoked_in/calls/call_meeting_compiler.dart';
+import 'package:yoked_in/calls/call_meeting_models.dart';
+import 'package:yoked_in/calls/call_meeting_repository.dart';
 import 'package:yoked_in/calls/call_recording_models.dart';
 import 'package:yoked_in/calls/call_recording_repository.dart';
 import 'package:yoked_in/calls/call_transcription_pipeline.dart';
@@ -31,9 +33,14 @@ class CallRecordingPanel extends ConsumerStatefulWidget {
 
 class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
   final CallRecordingRepository _repository = CallRecordingRepository();
+  final CallMeetingRepository _meetingRepository = CallMeetingRepository();
   final CallTranscriptionPipeline _pipeline = CallTranscriptionPipeline();
 
   CallRecordingSession? _session;
+
+  /// A group meeting recorded by other members: no audio on this device, but
+  /// the shared transcript and minutes belong to the whole group.
+  CallMeeting? _sharedMeeting;
   bool _loading = true;
   bool _busy = false;
   String? _status;
@@ -55,9 +62,22 @@ class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
               conversationType: widget.conversationType,
               ownerUid: uid,
             );
+      // Group members who were not in the call have no recording of their own.
+      // The meeting is still part of the group's history, so fall back to the
+      // newest shared meeting for this conversation.
+      CallMeeting? sharedMeeting;
+      if (sessions.isEmpty && widget.conversationType == 'group') {
+        final meetings = await _meetingRepository.meetingsForConversation(
+          conversationId: widget.conversationId,
+          conversationType: widget.conversationType,
+        );
+        sharedMeeting = meetings.isEmpty ? null : meetings.first;
+      }
+
       if (!mounted) return;
       setState(() {
         _session = sessions.isEmpty ? null : sessions.first;
+        _sharedMeeting = sharedMeeting;
         _loading = false;
       });
     } catch (error) {
@@ -116,9 +136,58 @@ class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
     }
   }
 
+  /// Builds minutes for a group meeting recorded on other devices.
+  Future<void> _generateSharedMinutes() async {
+    final meeting = _sharedMeeting;
+    if (meeting == null || _busy) return;
+
+    setState(() {
+      _busy = true;
+      _error = null;
+      _status = 'Combining every participant\'s transcript…';
+    });
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final minute =
+          await CallMeetingCompiler(groq: ref.read(groqServiceProvider))
+              .compile(
+        meetingId: meeting.id,
+        uid: uid,
+        conversationId: widget.conversationId,
+        conversationType: widget.conversationType,
+        conversationTitle: widget.conversationTitle,
+        onProgress: (label) {
+          if (!mounted) return;
+          setState(() => _status = label);
+        },
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = 'Minutes generated and saved.';
+      });
+      widget.onMinuteReady(minute);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = null;
+        _error = error is AiServiceException
+            ? error.message
+            : 'The minutes could not be generated. Please try again.';
+      });
+    }
+  }
+
   Future<void> _generateMinutes() async {
     final session = _session;
-    if (session == null || _busy) return;
+    if (session == null) {
+      await _generateSharedMinutes();
+      return;
+    }
+    if (_busy) return;
 
     final meetingId = (session.meetingId ?? '').trim();
     final transcript = session.transcriptText?.trim() ?? '';
@@ -226,6 +295,10 @@ class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
 
     final session = _session;
     if (session == null) {
+      final shared = _sharedMeeting;
+      if (shared != null) {
+        return _sharedMeetingCard(shared);
+      }
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
@@ -251,7 +324,10 @@ class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
     }
 
     final canTranscribe = !session.hasTranscript;
-    final canGenerateMinutes = session.hasTranscript;
+    // A shared meeting keeps its text in the meeting document, so a part that
+    // has no transcript of its own can still be compiled into minutes.
+    final canGenerateMinutes =
+        session.hasTranscript || (session.meetingId ?? '').isNotEmpty;
 
     return Container(
       width: double.infinity,
@@ -347,6 +423,92 @@ class _CallRecordingPanelState extends ConsumerState<CallRecordingPanel> {
                   ),
                 ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A group call recorded by another member.
+  Widget _sharedMeetingCard(CallMeeting meeting) {
+    final recorder = meeting.activeRecorderName.trim();
+    final startedAt = meeting.startedAtMs > 0
+        ? DateTime.fromMillisecondsSinceEpoch(meeting.startedAtMs)
+        : null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.groups, size: 18, color: Colors.blue.shade800),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  startedAt == null
+                      ? 'Recorded group call'
+                      : 'Recorded group call · ${_formatDateTime(startedAt)}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            recorder.isEmpty
+                ? 'Shared with the group · transcripts are saved by each '
+                    'participant'
+                : 'Shared with the group · recorded by $recorder',
+            style: TextStyle(fontSize: 12, color: Colors.blue.shade900),
+          ),
+          if (_status != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (_busy) ...[
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    _status!,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: const TextStyle(fontSize: 12, color: Colors.red),
+            ),
+          ],
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _generateSharedMinutes,
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: const Text('Minutes from shared transcript'),
+            ),
           ),
         ],
       ),

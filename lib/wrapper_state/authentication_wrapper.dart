@@ -1,7 +1,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:yoked_in/other_screens/main_home.dart';
+import 'package:yoked_in/other_screens/home_screen.dart';
 
 class AuthenticatedWrapper extends ConsumerStatefulWidget {
   const AuthenticatedWrapper({super.key});
@@ -96,6 +96,6 @@ class _AuthenticatedWrapperState extends ConsumerState<AuthenticatedWrapper> {
   Widget build(BuildContext context) {
     // Go directly to home screen
     // Initialization happens in background
-    return const MainHomeScreen();
+    return const HomeScreen();
   }
 }

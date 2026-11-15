@@ -253,8 +253,13 @@ Alice: Agreed! Talk to you Monday. Bye!
                     onMinuteReady: _openGeneratedMinute,
                   ),
                   const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  // A Row forced both onto one line and overflowed on narrow
+                  // phones, so the label and the button wrap instead.
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 4,
                     children: [
                       const Text(
                         'Call Transcript or Notes:',

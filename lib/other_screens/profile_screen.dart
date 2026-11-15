@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:yoked_in/auth/google_auth_service.dart';
+import 'package:yoked_in/auth/user_login_screen.dart';
 import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/provider/user_list_provider.dart';
 import 'package:yoked_in/provider/user_profile_provider.dart';
@@ -208,11 +209,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
                     if (!context.mounted) return;
 
-                    // The app root follows the Firebase auth state, so unwinding
-                    // to it is enough: it now renders the login screen. Pushing a
-                    // second login screen used to leave the old session visible.
+                    // Show the login screen explicitly. Unwinding to the root
+                    // route is not enough: after a sign-in the root route is
+                    // the screen pushed at that moment (the hub), so the
+                    // signed-out user stayed on an authenticated screen.
                     Navigator.of(context, rootNavigator: true)
-                        .popUntil((route) => route.isFirst);
+                        .pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (_) => const UserLoginScreen(),
+                      ),
+                      (route) => false,
+                    );
                   }
                 },
                 child: const Padding(

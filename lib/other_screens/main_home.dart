@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/chat/chat_list.dart';
 import 'package:yoked_in/group_chat/group_screen.dart';
-import 'package:yoked_in/other_screens/profile_screen.dart';
+import 'package:yoked_in/other_screens/home_screen.dart';
 import 'package:yoked_in/other_screens/user_list_screen.dart';
 import 'package:yoked_in/provider/chat_provider.dart';
 import 'package:yoked_in/provider/group_chat_provider.dart';
@@ -27,7 +27,7 @@ class _MainHomeScreenState extends ConsumerState<MainHomeScreen>
     const ChatListScreen(),
     const GroupScreen(),
     const UsersListScreen(),
-    const ProfileScreen(),
+    const HomeScreen(),
   ];
 
   @override
@@ -251,14 +251,14 @@ class _MainHomeScreenState extends ConsumerState<MainHomeScreen>
         },
         items: [
           const BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chats'),
-          BottomNavigationBarItem(icon: Icon(Icons.wechat), label: "Group"),
+          BottomNavigationBarItem(icon: Icon(Icons.wechat), label: "Teams"),
           BottomNavigationBarItem(
             icon: const Icon(Icons.people),
-            label: 'Connects',
+            label: 'Explore',
           ),
           const BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: "Profile",
+            icon: Icon(Icons.home),
+            label: "Home",
           ),
         ],
       ),
