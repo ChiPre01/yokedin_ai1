@@ -197,16 +197,33 @@ class CloudflareMediaService {
   /// Group chat:
   /// uploadFile(file, purpose: 'group', groupId: groupId)
   ///
+  /// Character reference photo:
+  /// uploadFile(file, purpose: 'character', characterId: characterId)
+  ///
   Future<Map<String, dynamic>> uploadFile(
     XFile file, {
     String purpose = 'profile',
     String? chatId,
     String? groupId,
+    String? characterId,
     String? category,
     String? contentTypeOverride,
   }) async {
-    if (!['profile', 'chat', 'group'].contains(purpose)) {
+    if (!['profile', 'chat', 'group', 'character'].contains(purpose)) {
       throw CloudflareMediaException('Invalid media purpose.');
+    }
+
+    if (purpose == 'character' &&
+        (characterId == null || characterId.trim().isEmpty)) {
+      throw CloudflareMediaException(
+        'A character ID is required for character photos.',
+      );
+    }
+
+    if (purpose != 'character' && characterId != null) {
+      throw CloudflareMediaException(
+        'A character ID can only be used for character photos.',
+      );
     }
 
     if (purpose == 'chat' &&
@@ -258,6 +275,12 @@ class CloudflareMediaService {
       );
     }
 
+    if (purpose == 'character' && mediaCategory != 'image') {
+      throw CloudflareMediaException(
+        'Character photos must be images.',
+      );
+    }
+
     final bytes = await file.readAsBytes();
 
     if (bytes.isEmpty) {
@@ -287,6 +310,7 @@ class CloudflareMediaService {
       'X-Media-Category': mediaCategory,
       if (chatId != null) 'X-Chat-Id': chatId,
       if (groupId != null) 'X-Group-Id': groupId,
+      if (characterId != null) 'X-Character-Id': characterId,
     });
 
     request.bodyBytes = bytes;

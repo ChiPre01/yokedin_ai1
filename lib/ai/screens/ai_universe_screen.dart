@@ -1,47 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:yoked_in/ai/characters/characters_screen.dart';
+import 'package:yoked_in/helper/navigation_helper.dart';
 
 /// Entry point of the AI Universe section.
 ///
-/// The section is still being built, so this screen only lays out where it is
-/// going: the five parts that will grow here, in the order they get built.
+/// Characters is the part that exists today; the other four pillars are shown
+/// as the plan they are, in the order they will be built.
 class AiUniverseScreen extends StatelessWidget {
   const AiUniverseScreen({super.key});
-
-  static const List<_Pillar> _pillars = [
-    _Pillar(
-      icon: Icons.person_pin_circle_outlined,
-      title: 'Characters',
-      description:
-          'Create a character from text, pictures or both, and keep the same '
-          'face, voice and personality every time you use it.',
-    ),
-    _Pillar(
-      icon: Icons.forum_outlined,
-      title: 'Interaction',
-      description:
-          'Chat, voice calls and live video with the characters you created.',
-    ),
-    _Pillar(
-      icon: Icons.movie_creation_outlined,
-      title: 'Studios',
-      description:
-          'Turn your characters into stories, dramas and short scenes, then '
-          'download them to your device.',
-    ),
-    _Pillar(
-      icon: Icons.content_cut,
-      title: 'Creator Studio',
-      description:
-          'A CapCut-style editor for your own videos, rendered on your device '
-          'and saved straight to your gallery or downloads.',
-    ),
-    _Pillar(
-      icon: Icons.explore_outlined,
-      title: 'Discover',
-      description:
-          'Browse and share characters with other creators in the community.',
-    ),
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -73,47 +39,163 @@ class AiUniverseScreen extends StatelessWidget {
             'learning, entertainment and content creation.',
             style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
           ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.deepPurple.shade50,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.construction_outlined,
-                  size: 18,
-                  color: Colors.deepPurple.shade300,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'This section is in development. Character creation comes '
-                    'first.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.deepPurple.shade300,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 22),
+          _AvailableTile(
+            icon: Icons.person_pin_circle_outlined,
+            title: 'Characters',
+            description:
+                'Describe a character and AI builds them: a companion, a '
+                'tutor, a musician. Keep the same face and personality.',
+            onTap: () =>
+                NavigationHelper.push(context, const CharactersScreen()),
           ),
-          const SizedBox(height: 20),
-          for (final pillar in _pillars) ...[
-            _PillarTile(pillar: pillar),
-            const SizedBox(height: 12),
-          ],
+          const SizedBox(height: 22),
+          Row(
+            children: [
+              Text(
+                'Coming next',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Divider(color: Colors.grey.shade200)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const _PillarTile(
+            icon: Icons.forum_outlined,
+            title: 'Interaction',
+            description:
+                'Chat, voice calls and live video with the characters you '
+                'created.',
+          ),
+          const SizedBox(height: 12),
+          const _PillarTile(
+            icon: Icons.movie_creation_outlined,
+            title: 'Studios',
+            description:
+                'Turn your characters into stories, dramas and short scenes, '
+                'then download them to your device.',
+          ),
+          const SizedBox(height: 12),
+          const _PillarTile(
+            icon: Icons.content_cut,
+            title: 'Creator Studio',
+            description:
+                'A CapCut-style editor for your own videos, rendered on your '
+                'device and saved straight to your gallery or downloads.',
+          ),
+          const SizedBox(height: 12),
+          const _PillarTile(
+            icon: Icons.explore_outlined,
+            title: 'Discover',
+            description:
+                'Browse and share characters with other creators in the '
+                'community.',
+          ),
         ],
       ),
     );
   }
 }
 
-class _Pillar {
-  const _Pillar({
+class _AvailableTile extends StatelessWidget {
+  const _AvailableTile({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.deepPurple.shade50,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Container(
+                height: 54,
+                width: 54,
+                decoration: BoxDecoration(
+                  color: Colors.deepPurple.shade100,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: Colors.deepPurple.shade400, size: 28),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Ready',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.deepPurple.shade400,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.3,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: Colors.deepPurple.shade200),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PillarTile extends StatelessWidget {
+  const _PillarTile({
     required this.icon,
     required this.title,
     required this.description,
@@ -122,12 +204,6 @@ class _Pillar {
   final IconData icon;
   final String title;
   final String description;
-}
-
-class _PillarTile extends StatelessWidget {
-  const _PillarTile({required this.pillar});
-
-  final _Pillar pillar;
 
   @override
   Widget build(BuildContext context) {
@@ -140,14 +216,14 @@ class _PillarTile extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(pillar.icon, color: Colors.deepPurple.shade200, size: 24),
+          Icon(icon, color: Colors.deepPurple.shade200, size: 24),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  pillar.title,
+                  title,
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -156,7 +232,7 @@ class _PillarTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  pillar.description,
+                  description,
                   style: TextStyle(
                     fontSize: 13,
                     height: 1.35,

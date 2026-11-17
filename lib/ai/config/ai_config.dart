@@ -21,6 +21,10 @@ class AIConfig {
   static const String smartRepliesPath = "/ai/smart-replies";
   static const String transcribePath = "/ai/transcribe";
 
+  /// AI Universe character endpoints.
+  static const String characterDraftPath = "/ai/characters/draft";
+  static const String characterImagePath = "/ai/characters/image";
+
   /// Provider label used in AI copy.
   static const String aiProviderName = "Groq AI";
 
@@ -46,6 +50,11 @@ class AIConfig {
   /// One recording part is transcribed server-side with its own provider
   /// timeout; this ceiling only bounds the client wait.
   static const Duration transcriptionCallTimeout = Duration(seconds: 120);
+
+  /// Character drafting is a text call; a portrait generation call can take
+  /// noticeably longer because the image provider renders before answering.
+  static const Duration characterDraftTimeout = Duration(seconds: 60);
+  static const Duration characterImageTimeout = Duration(seconds: 150);
 
   /// Extra grace added on top of a call timeout before the client gives up.
   static const Duration callTimeoutGrace = Duration(seconds: 5);

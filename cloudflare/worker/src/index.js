@@ -68,7 +68,7 @@ function corsHeaders(request) {
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Authorization, Content-Type, X-File-Name, X-Media-Purpose, X-Media-Category, X-Chat-Id, X-Group-Id",
+      "Authorization, Content-Type, X-File-Name, X-Media-Purpose, X-Media-Category, X-Chat-Id, X-Group-Id, X-Character-Id",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -294,6 +294,101 @@ function mediaHasExpired(metadata) {
   return Number.isFinite(expiry) && expiry > 0 && Date.now() >= expiry;
 }
 
+/**
+ * Hex HMAC-SHA256. Used to sign short-lived media links so an image provider
+ * (which cannot present a Firebase token) can fetch a picture we keep private.
+ */
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(message)
+  );
+  return Array.from(new Uint8Array(signature))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** A media link that needs no Firebase token, valid for [ttlMs] only. */
+async function signedMediaUrl(env, origin, key, ttlMs = 15 * 60 * 1000) {
+  const secret = envString(env.MEDIA_SIGNING_KEY);
+  if (!secret) return "";
+
+  const exp = Date.now() + ttlMs;
+  const sig = await hmacHex(secret, `${key}|${exp}`);
+  return `${origin}/media/${key}?exp=${exp}&sig=${sig}`;
+}
+
+/**
+ * Serves a media object for a request carrying a valid `exp`/`sig` pair.
+ * These requests come from image providers, so they have no Firebase token
+ * and are handled before the authentication gate.
+ */
+async function serveSignedMedia(request, env, url, cors) {
+  const key = safeKeyFromPath(url.pathname);
+  const secret = envString(env.MEDIA_SIGNING_KEY);
+  const sig = (url.searchParams.get("sig") || "").toLowerCase();
+  const exp = Number(url.searchParams.get("exp") || 0);
+
+  if (!key || !secret || !sig || !Number.isFinite(exp) || exp <= 0) {
+    return responseJson({ error: "This media link is not valid." }, 403, cors);
+  }
+
+  if (exp <= Date.now()) {
+    return responseJson(
+      { error: "This media link has expired.", expired: true },
+      410,
+      cors
+    );
+  }
+
+  const expected = await hmacHex(secret, `${key}|${exp}`);
+  if (expected !== sig) {
+    return responseJson({ error: "This media link is not valid." }, 403, cors);
+  }
+
+  const object = await env.MEDIA_BUCKET.get(key);
+  if (!object) {
+    return responseJson({ error: "Media not found" }, 404, cors);
+  }
+
+  if (mediaHasExpired(object.customMetadata || {})) {
+    return responseJson(
+      { error: "Media expired.", expired: true },
+      410,
+      cors
+    );
+  }
+
+  const headers = new Headers(cors);
+  object.writeHttpMetadata(headers);
+  headers.set("ETag", object.httpEtag);
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("X-Content-Type-Options", "nosniff");
+
+  return new Response(object.body, { status: 200, headers });
+}
+
+/** Base64 for a byte array, chunked so large pictures cannot blow the stack. */
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(index, index + chunkSize)
+    );
+  }
+  return btoa(binary);
+}
+
 // =====================================================================
 // AI ROUTES (Groq)
 //
@@ -309,6 +404,19 @@ function mediaHasExpired(metadata) {
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "openai/gpt-oss-120b";
+
+// Reported by /health so a deployment can be identified without guessing.
+// Bump this when a change needs to be confirmed live.
+const WORKER_BUILD = "2026-11-16-characters";
+const WORKER_FEATURES = [
+  "characters",
+  "character-photos",
+  "signed-media",
+];
+// Groq's image-capable model, used when a character is built from a photo.
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+// A reference picture is inlined for the vision call, so it must stay small.
+const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 
 const MAX_INPUT_CHARS = 16000;
 const MAX_SUMMARY_MESSAGES = 30;
@@ -589,10 +697,23 @@ async function requestGroqCompletion(env, options) {
   }
 
   const baseBody = {
-    model: GROQ_MODEL,
+    model: options.model || envString(env?.GROQ_MODEL) || GROQ_MODEL,
     messages: [
       { role: "system", content: options.systemPrompt },
-      { role: "user", content: options.userPrompt },
+      // A picture travels as an OpenAI-style content part; the text-only path
+      // keeps sending a plain string so nothing else changes behaviour.
+      options.imageDataUri
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: options.userPrompt },
+              {
+                type: "image_url",
+                image_url: { url: options.imageDataUri },
+              },
+            ],
+          }
+        : { role: "user", content: options.userPrompt },
     ],
     temperature: options.temperature,
     max_completion_tokens: options.maxCompletionTokens,
@@ -1389,6 +1510,521 @@ async function requestGroqTranscription(
  * and the client stores it against a stable chunk id, so no duplicate
  * transcript entries are produced.
  */
+// -------------------- AI UNIVERSE: CHARACTERS --------------------
+
+const CHARACTER_CATEGORIES = [
+  "human",
+  "animal",
+  "mythical",
+  "legendary",
+  "object",
+  "fantasy",
+];
+
+const CHARACTER_ROLES = [
+  "companion",
+  "friend",
+  "tutor",
+  "musician",
+  "storyteller",
+  "custom",
+];
+
+const CHARACTER_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    category: { type: "string", enum: CHARACTER_CATEGORIES },
+    role: { type: "string", enum: CHARACTER_ROLES },
+    appearance: { type: "string" },
+    personality: { type: "string" },
+    backstory: { type: "string" },
+    interests: { type: "array", items: { type: "string" } },
+    speakingStyle: { type: "string" },
+    language: { type: "string" },
+    imagePrompt: { type: "string" },
+  },
+  required: [
+    "name",
+    "category",
+    "role",
+    "appearance",
+    "personality",
+    "backstory",
+    "interests",
+    "speakingStyle",
+    "language",
+    "imagePrompt",
+  ],
+  additionalProperties: false,
+};
+
+const CHARACTER_SYSTEM_PROMPT = `You design fictional AI characters for the Yoked In app.
+Return only JSON matching the provided schema.
+Rules:
+- Every character is fictional. Never describe a real, identifiable private person.
+- The character must be an adult unless the description is clearly a child character used for education or storytelling; never write sexual or romantic content for a minor.
+- Write the appearance as a visual description an image model can render: age, face, hair, skin, build, clothing, mood, setting.
+- Write the personality and backstory in second person as instructions to the character ("You are ..."), because this text becomes the character's system prompt later.
+- speakingStyle describes how the character talks: tone, pace, vocabulary, accent hints, habits.
+- imagePrompt is a single photorealistic portrait prompt that stays consistent with the appearance.
+- Keep each field concise: appearance and imagePrompt at most 120 words, personality and backstory at most 120 words.`;
+
+function oneOf(value, allowed, fallback) {
+  const text = clampText(value, 24).toLowerCase();
+  return allowed.includes(text) ? text : fallback;
+}
+
+function stringList(value, maxItems, maxChars) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => clampText(item, maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+/**
+ * Reads an uploaded picture as a data URI so a vision model can look at it
+ * without the bucket ever becoming public.
+ */
+async function readReferenceDataUri(env, user, imageKey) {
+  if (imageKey.includes("\\") || !imageKey.startsWith(`${user.sub}/`)) {
+    throw new AiError(
+      "FORBIDDEN",
+      "You can only use your own pictures as a reference.",
+      403
+    );
+  }
+
+  const object = await env.MEDIA_BUCKET.get(imageKey);
+  if (!object) {
+    throw new AiError(
+      "MEDIA_NOT_FOUND",
+      "The uploaded picture could not be found. Please upload it again.",
+      404
+    );
+  }
+
+  const contentType = (object.httpMetadata?.contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+
+  if (!contentType.startsWith("image/")) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "Reference pictures must be images.",
+      415
+    );
+  }
+
+  if ((Number(object.size) || 0) > MAX_REFERENCE_BYTES) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      `A reference picture must be smaller than ${Math.floor(
+        MAX_REFERENCE_BYTES / 1024 / 1024
+      )} MB.`,
+      413
+    );
+  }
+
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  return `data:${contentType};base64,${bytesToBase64(bytes)}`;
+}
+
+async function handleCharacterDraft(request, env, user, token, cors) {
+  const body = await readAiJsonBody(request);
+  const description = clampText(body.description, 2000);
+  const imageKey = clampText(body.imageKey, 300);
+
+  if (!description && !imageKey) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "Describe the character in a little more detail first.",
+      400
+    );
+  }
+
+  if (!imageKey && description.length < 10) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "Describe the character in a little more detail first.",
+      400
+    );
+  }
+
+  await enforceAiRateLimit(env, user.sub);
+
+  const category = oneOf(body.category, CHARACTER_CATEGORIES, "human");
+  const role = oneOf(body.role, CHARACTER_ROLES, "companion");
+  const imageDataUri = imageKey
+    ? await readReferenceDataUri(env, user, imageKey)
+    : "";
+
+  const content = await requestGroqCompletion(env, {
+    systemPrompt: imageDataUri
+      ? `${CHARACTER_SYSTEM_PROMPT}\n- The picture shows the person the character should be. Describe what you actually see (age, face, hair, skin, build, clothing, mood) and keep the character consistent with it.`
+      : CHARACTER_SYSTEM_PROMPT,
+    userPrompt: imageDataUri
+      ? "Study the attached picture, then write the character it shows.\n" +
+        (description ? `The user adds:\n"""\n${description}\n"""\n` : "") +
+        `Preferred category: ${category}\nPreferred role: ${role}\n` +
+        "Write the character now."
+      : `The user describes the character as:\n"""\n${description}\n"""\n` +
+        `Preferred category: ${category}\nPreferred role: ${role}\n` +
+        "Write the character now.",
+    imageDataUri: imageDataUri || undefined,
+    model: imageDataUri
+      ? envString(env.GROQ_VISION_MODEL, GROQ_VISION_MODEL)
+      : undefined,
+    schema: CHARACTER_SCHEMA,
+    schemaName: "ai_character",
+    temperature: 0.7,
+    maxCompletionTokens: 1200,
+    timeoutMs: 45000,
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new AiError(
+      "BAD_AI_RESPONSE",
+      "The AI response could not be understood. Please try again.",
+      502
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new AiError(
+      "BAD_AI_RESPONSE",
+      "The AI response could not be understood. Please try again.",
+      502
+    );
+  }
+
+  const character = {
+    name: clampText(parsed.name, 60) || "New character",
+    category: oneOf(parsed.category, CHARACTER_CATEGORIES, category),
+    role: oneOf(parsed.role, CHARACTER_ROLES, role),
+    appearance: clampText(parsed.appearance, 1200),
+    personality: clampText(parsed.personality, 1200),
+    backstory: clampText(parsed.backstory, 1400),
+    interests: stringList(parsed.interests, 8, 60),
+    speakingStyle: clampText(parsed.speakingStyle, 500),
+    language: clampText(parsed.language, 40) || "English",
+    imagePrompt: clampText(parsed.imagePrompt, 1200),
+  };
+
+  return responseJson({ success: true, character }, 200, cors);
+}
+
+function envString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+/** First http(s) image address in whatever shape the provider answered with. */
+function firstImageOutput(payload) {
+  const candidates = [
+    payload?.data?.outputs,
+    payload?.outputs,
+    payload?.data?.output,
+    payload?.output,
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === "string" && value.startsWith("http")) return value;
+    if (Array.isArray(value)) {
+      const hit = value.find(
+        (item) => typeof item === "string" && item.startsWith("http")
+      );
+      if (hit) return hit;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Asks the image provider for one portrait and returns its address.
+ *
+ * The provider and model are configuration, not code: IMAGE_API_KEY,
+ * IMAGE_MODEL (and optionally IMAGE_API_BASE) are Worker secrets/vars. The
+ * default base URL is the documented WaveSpeedAI endpoint.
+ */
+async function requestCharacterImage({
+  apiKey,
+  baseUrl,
+  model,
+  prompt,
+  images = [],
+}) {
+  // Model ids look like "google/nano-banana-2.1/text-to-image": the slashes are
+  // part of the path, so only the segments may be escaped.
+  const modelPath = String(model)
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+
+  const submit = await fetch(`${baseUrl}/${modelPath}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      prompt,
+      // Reference images only exist for models that accept them; the text-only
+      // endpoint rejects an empty array, so it is omitted entirely.
+      ...(images.length ? { images } : {}),
+      aspect_ratio: "3:4",
+      output_format: "jpeg",
+    }),
+  });
+
+  if (!submit.ok) {
+    const detail = (await submit.text().catch(() => "")).slice(0, 300);
+    console.error(`Image provider responded ${submit.status}: ${detail}`);
+    throw new AiError(
+      submit.status === 401 || submit.status === 403
+        ? "AI_NOT_CONFIGURED"
+        : "AI_SERVICE_UNAVAILABLE",
+      submit.status === 401 || submit.status === 403
+        ? "The image provider rejected its key. Please check the Worker secret."
+        : "The image service is temporarily unavailable. Please try again.",
+      503
+    );
+  }
+
+  let payload = await submit.json().catch(() => null);
+  let output = firstImageOutput(payload);
+
+  // Some models answer with a prediction id and finish asynchronously.
+  const predictionId = payload?.data?.id ? String(payload.data.id) : "";
+  const failedStatuses = ["failed", "cancelled", "canceled", "timeout", "deleted"];
+  for (let attempt = 0; attempt < 30 && !output && predictionId; attempt += 1) {
+    await sleep(2000);
+    const poll = await fetch(
+      `${baseUrl}/predictions/${encodeURIComponent(predictionId)}/result`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
+    if (!poll.ok) continue;
+    payload = await poll.json().catch(() => null);
+    output = firstImageOutput(payload);
+    const status = String(payload?.data?.status || "").toLowerCase();
+    if (failedStatuses.includes(status)) break;
+  }
+
+  if (!output) {
+    throw new AiError(
+      "AI_SERVICE_UNAVAILABLE",
+      "The image service returned no picture. Please try again.",
+      502
+    );
+  }
+
+  return output;
+}
+
+/**
+ * Validates up to three character reference pictures and confirms they belong
+ * to the caller. Returns their R2 keys, or the error to report.
+ */
+async function resolveCharacterReferences(env, user, value) {
+  if (value === undefined || value === null) return { keys: [] };
+
+  if (!Array.isArray(value)) {
+    return {
+      error: new AiError(
+        "INVALID_REQUEST",
+        "referenceKeys must be a list of uploaded pictures.",
+        400
+      ),
+    };
+  }
+
+  const keys = value
+    .map((item) => clampText(item, 300))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  for (const key of keys) {
+    if (key.includes("\\") || !key.startsWith(`${user.sub}/`)) {
+      return {
+        error: new AiError(
+          "FORBIDDEN",
+          "You can only use your own pictures as a reference.",
+          403
+        ),
+      };
+    }
+
+    const object = await env.MEDIA_BUCKET.head(key);
+    if (!object) {
+      return {
+        error: new AiError(
+          "MEDIA_NOT_FOUND",
+          "The reference picture could not be found. Please upload it again.",
+          404
+        ),
+      };
+    }
+
+    const contentType = (object.httpMetadata?.contentType || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+
+    if (!contentType.startsWith("image/")) {
+      return {
+        error: new AiError(
+          "INVALID_REQUEST",
+          "Reference pictures must be images.",
+          415
+        ),
+      };
+    }
+  }
+
+  return { keys };
+}
+
+async function handleCharacterImage(request, env, user, token, cors) {
+  const body = await readAiJsonBody(request);
+  const prompt = clampText(body.prompt, 1500);
+  const characterId = clampText(body.characterId, 80) || crypto.randomUUID();
+
+  if (!prompt) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "A portrait description is required.",
+      400
+    );
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(characterId)) {
+    throw new AiError("INVALID_REQUEST", "Invalid characterId.", 400);
+  }
+
+  await enforceAiRateLimit(env, user.sub);
+
+  const apiKey = envString(env.IMAGE_API_KEY, env.WAVESPEED_API_KEY);
+  const model = envString(env.IMAGE_MODEL);
+  const baseUrl = envString(
+    env.IMAGE_API_BASE,
+    "https://api.wavespeed.ai/api/v3"
+  ).replace(/\/+$/, "");
+
+  if (!apiKey) {
+    throw new AiError(
+      "AI_NOT_CONFIGURED",
+      "Portrait generation needs IMAGE_API_KEY (or WAVESPEED_API_KEY) on the server.",
+      503
+    );
+  }
+  // Reference pictures switch the portrait to the edit model, which keeps the
+  // face from the upload instead of inventing one.
+  const tf = await resolveCharacterReferences(env, user, body.referenceKeys);
+
+  if (tf.error) {
+    throw tf.error;
+  }
+
+  // A text portrait needs IMAGE_MODEL. A reference portrait falls back to the
+  // documented edit model, so the two paths can be configured independently
+  // instead of both being blocked when only one model is set.
+  const usesReferences = tf.keys.length > 0;
+  if (!model && !usesReferences) {
+    throw new AiError(
+      "AI_NOT_CONFIGURED",
+      "Set IMAGE_MODEL to the image provider's model id before generating portraits.",
+      503
+    );
+  }
+
+  const origin = new URL(request.url).origin;
+  const referenceUrls = [];
+
+  for (const referenceKey of tf.keys) {
+    const url = await signedMediaUrl(env, origin, referenceKey);
+    if (!url) {
+      throw new AiError(
+        "AI_NOT_CONFIGURED",
+        "Portrait generation from a photo needs MEDIA_SIGNING_KEY on the server.",
+        503
+      );
+    }
+    referenceUrls.push(url);
+  }
+
+  const editModel =
+    referenceUrls.length > 0
+      ? envString(env.IMAGE_EDIT_MODEL, "google/nano-banana-2.1/edit")
+      : model;
+
+  const imageUrl = await requestCharacterImage({
+    apiKey,
+    baseUrl,
+    model: editModel,
+    prompt,
+    images: referenceUrls,
+  });
+
+  const download = await fetch(imageUrl);
+  if (!download.ok) {
+    throw new AiError(
+      "AI_SERVICE_UNAVAILABLE",
+      "The generated portrait could not be downloaded. Please try again.",
+      502
+    );
+  }
+
+  const contentType = (download.headers.get("content-type") || "image/png")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  const extension = contentType.includes("webp")
+    ? "webp"
+    : contentType.includes("jpeg") || contentType.includes("jpg")
+      ? "jpg"
+      : "png";
+
+  const bytes = await download.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new AiError(
+      "AI_SERVICE_UNAVAILABLE",
+      "The generated portrait was empty. Please try again.",
+      502
+    );
+  }
+
+  const key = `${user.sub}/characters/${characterId}.${extension}`;
+
+  await env.MEDIA_BUCKET.put(key, bytes, {
+    httpMetadata: { contentType },
+    customMetadata: {
+      ownerUid: user.sub,
+      purpose: "character",
+      category: "image",
+      createdAtMs: String(Date.now()),
+    },
+  });
+
+  return responseJson(
+    {
+      success: true,
+      key,
+      url: `${new URL(request.url).origin}/media/${key}`,
+      contentType,
+    },
+    200,
+    cors
+  );
+}
+
 async function handleTranscribeRecording(request, env, user, token, cors) {
   const body = await readAiJsonBody(request);
   const { conversationId, conversationType } = readConversation(body);
@@ -1610,6 +2246,10 @@ async function handleAiRoute(request, env, user, token, url, cors) {
         return await handleSmartReplies(request, env, user, token, cors);
       case "/ai/transcribe":
         return await handleTranscribeRecording(request, env, user, token, cors);
+      case "/ai/characters/draft":
+        return await handleCharacterDraft(request, env, user, token, cors);
+      case "/ai/characters/image":
+        return await handleCharacterImage(request, env, user, token, cors);
       default:
         return responseJson(
           {
@@ -1638,10 +2278,25 @@ export default {
 
     if (url.pathname === "/health" && request.method === "GET") {
       return responseJson(
-        { status: "ok", service: "yokedin-media-api" },
+        {
+          status: "ok",
+          service: "yokedin-media-api",
+          build: WORKER_BUILD,
+          features: WORKER_FEATURES,
+        },
         200,
         cors
       );
+    }
+
+    // Signed media links are fetched by an image provider, which cannot send a
+    // Firebase token, so they are served before the authentication gate.
+    if (
+      request.method === "GET" &&
+      url.pathname.startsWith("/media/") &&
+      (url.searchParams.has("sig") || url.searchParams.has("exp"))
+    ) {
+      return serveSignedMedia(request, env, url, cors);
     }
 
     if (!["GET", "POST", "DELETE"].includes(request.method)) {
@@ -1691,12 +2346,13 @@ export default {
         }
 
         const purpose = request.headers.get("X-Media-Purpose") || "profile";
-        if (!["profile", "chat", "group"].includes(purpose)) {
+        if (!["profile", "chat", "group", "character"].includes(purpose)) {
           return responseJson({ error: "Invalid media purpose." }, 400, cors);
         }
 
         const chatId = request.headers.get("X-Chat-Id") || "";
         const groupId = request.headers.get("X-Group-Id") || "";
+        const characterId = request.headers.get("X-Character-Id") || "";
 
         if (purpose === "chat") {
           if (!chatId || !(await isChatParticipant(chatId, user.sub, token))) {
@@ -1729,6 +2385,24 @@ export default {
           );
         }
 
+        // A character reference picture belongs to one character and can only
+        // be used to build that character's identity.
+        if (purpose === "character") {
+          if (!/^[A-Za-z0-9_-]{1,80}$/.test(characterId)) {
+            return responseJson(
+              { error: "A valid character ID is required for character photos." },
+              400,
+              cors
+            );
+          }
+        } else if (characterId) {
+          return responseJson(
+            { error: "Unexpected character identifier." },
+            400,
+            cors
+          );
+        }
+
         const inferredCategory = categoryForContentType(contentType);
         const requestedCategory =
           request.headers.get("X-Media-Category") || inferredCategory;
@@ -1755,6 +2429,14 @@ export default {
         if (purpose === "profile" && requestedCategory !== "image") {
           return responseJson(
             { error: "Profile uploads must be images." },
+            415,
+            cors
+          );
+        }
+
+        if (purpose === "character" && requestedCategory !== "image") {
+          return responseJson(
+            { error: "Character photos must be images." },
             415,
             cors
           );
@@ -1793,7 +2475,14 @@ export default {
 
         const originalName = request.headers.get("X-File-Name") || "upload";
         const extension = getExtension(originalName, contentType);
-        const key = `${user.sub}/${crypto.randomUUID()}.${extension}`;
+        // Reference pictures are grouped per character so they can be removed
+        // together, and so they never collide with chat or profile objects.
+        const key =
+          purpose === "character"
+            ? `${user.sub}/characters/${characterId}/ref-${crypto.randomUUID()}.${extension}`
+            : `${user.sub}/${crypto.randomUUID()}.${extension}`;
+        const storedPurpose =
+          purpose === "character" ? "character_reference" : purpose;
         const expiryDuration = EXPIRY_MS[requestedCategory];
         const expiresAtMs = expiryDuration === null
           ? null
@@ -1803,12 +2492,13 @@ export default {
           httpMetadata: { contentType },
           customMetadata: {
             ownerUid: user.sub,
-            purpose,
+            purpose: storedPurpose,
             category: requestedCategory,
             createdAtMs: String(Date.now()),
             ...(expiresAtMs === null ? {} : { expiresAtMs: String(expiresAtMs) }),
             ...(purpose === "chat" ? { chatId } : {}),
             ...(purpose === "group" ? { groupId } : {}),
+            ...(purpose === "character" ? { characterId } : {}),
           },
         });
 
@@ -1883,6 +2573,18 @@ export default {
 
         if (purpose === "profile") {
           // Any signed-in user may view a profile picture.
+        } else if (purpose === "character") {
+          // Character portraits are readable by any signed-in user; the
+          // document that points at one decides who may use the character.
+        } else if (purpose === "character_reference") {
+          // A reference photo of a real face stays private to its owner.
+          if (!key.startsWith(`${user.sub}/`)) {
+            return responseJson(
+              { error: "You are not allowed to view this character photo." },
+              403,
+              cors
+            );
+          }
         } else if (purpose === "chat") {
           if (
             !metadata.chatId ||
