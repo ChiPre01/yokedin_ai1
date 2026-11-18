@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:yoked_in/ai/characters/chat/character_chat_list_screen.dart';
 import 'package:yoked_in/ai/characters/characters_screen.dart';
 import 'package:yoked_in/helper/navigation_helper.dart';
 
 /// Entry point of the AI Universe section.
 ///
-/// Characters is the part that exists today; the other four pillars are shown
-/// as the plan they are, in the order they will be built.
+/// Characters and Interaction are active today; the other three pillars
+/// are shown as the plan they are, in the order they will be built.
 class AiUniverseScreen extends StatelessWidget {
   const AiUniverseScreen({super.key});
 
@@ -49,6 +50,18 @@ class AiUniverseScreen extends StatelessWidget {
             onTap: () =>
                 NavigationHelper.push(context, const CharactersScreen()),
           ),
+          const SizedBox(height: 12),
+          _AvailableTile(
+            icon: Icons.forum_outlined,
+            title: 'Interaction',
+            description:
+                'Chat with the AI characters you created. Pick up right '
+                'where you left off.',
+            onTap: () => NavigationHelper.push(
+              context,
+              const CharacterChatListScreen(),
+            ),
+          ),
           const SizedBox(height: 22),
           Row(
             children: [
@@ -65,14 +78,6 @@ class AiUniverseScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          const _PillarTile(
-            icon: Icons.forum_outlined,
-            title: 'Interaction',
-            description:
-                'Chat, voice calls and live video with the characters you '
-                'created.',
-          ),
-          const SizedBox(height: 12),
           const _PillarTile(
             icon: Icons.movie_creation_outlined,
             title: 'Studios',

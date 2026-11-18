@@ -11,11 +11,13 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_auth
   firebase_core
   firebase_storage
+  flutter_tts
   flutter_volume_controller
   permission_handler_windows
   record_windows
   screen_brightness_windows
   share_plus
+  speech_to_text_windows
   url_launcher_windows
   zego_express_engine
   zego_zim

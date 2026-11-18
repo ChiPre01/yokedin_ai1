@@ -181,7 +181,7 @@ async function verifyFirebaseToken(request) {
 
 async function getFirestoreDocument(collection, documentId, token) {
   if (
-    !["chats", "groups"].includes(collection) ||
+    !["chats", "groups", "ai_characters"].includes(collection) ||
     !documentId ||
     documentId.length > 150 ||
     documentId.includes("/")
@@ -936,7 +936,9 @@ function normalizeReplies(json) {
  * otherwise falls back to an in-isolate counter. Returning false means the
  * caller is throttled.
  */
-async function allowAiRequest(env, uid) {
+async function allowAiRequest(env, uid, bucket = "ai") {
+  const rateKey = `${bucket}:${uid}`;
+
   // If a Cloudflare rate-limit binding is configured, it is authoritative.
   // Never silently fall back to a weaker per-isolate counter when it fails.
   if (env?.AI_RATE_LIMITER !== undefined && env?.AI_RATE_LIMITER !== null) {
@@ -949,7 +951,7 @@ async function allowAiRequest(env, uid) {
     }
 
     try {
-      const outcome = await env.AI_RATE_LIMITER.limit({ key: `ai:${uid}` });
+      const outcome = await env.AI_RATE_LIMITER.limit({ key: rateKey });
       if (!outcome || typeof outcome.success !== "boolean") {
         throw new Error("Malformed rate limiter response");
       }
@@ -966,7 +968,7 @@ async function allowAiRequest(env, uid) {
 
   // Local-development fallback only. This counter is per isolate, not global.
   const now = Date.now();
-  const entry = aiIsolateHits.get(uid);
+  const entry = aiIsolateHits.get(rateKey);
 
   if (!entry || now - entry.windowStart >= AI_ISOLATE_WINDOW_MS) {
     if (aiIsolateHits.size > 500) {
@@ -976,7 +978,7 @@ async function allowAiRequest(env, uid) {
         }
       }
     }
-    aiIsolateHits.set(uid, { windowStart: now, count: 1 });
+    aiIsolateHits.set(rateKey, { windowStart: now, count: 1 });
     return true;
   }
 
@@ -984,8 +986,8 @@ async function allowAiRequest(env, uid) {
   return entry.count <= AI_ISOLATE_LIMIT;
 }
 
-async function enforceAiRateLimit(env, uid) {
-  if (!(await allowAiRequest(env, uid))) {
+async function enforceAiRateLimit(env, uid, bucket = "ai") {
+  if (!(await allowAiRequest(env, uid, bucket))) {
     throw new AiError(
       "RATE_LIMITED",
       "You are sending AI requests too quickly. Please wait a minute and try again.",
@@ -2025,6 +2027,283 @@ async function handleCharacterImage(request, env, user, token, cors) {
   );
 }
 
+// ---------------------------------------------------------------------
+// CHARACTER CHAT (Phase 2)
+//
+// The character profile is read from Firestore on the server and the system
+// prompt is built here, so a crafted request can never replace the character
+// with an arbitrary assistant. Chat history and memory come from the client
+// because they are the user's own words and the user's own summary.
+// ---------------------------------------------------------------------
+
+const CHARACTER_CHAT_TIMEOUT_MS = 30000;
+const CHARACTER_MEMORY_TIMEOUT_MS = 30000;
+const CHARACTER_CHAT_MAX_MESSAGES = 20;
+const CHARACTER_CHAT_MESSAGE_CHARS = 2000;
+const CHARACTER_MEMORY_MAX_CHARS = 1500;
+const CHARACTER_MEMORY_INPUT_CHARS = 8000;
+const CHARACTER_DAILY_MESSAGE_LIMIT = 100;
+const CHARACTER_CHAT_RATE_BUCKET = "ai-chat";
+
+const CHARACTER_CHAT_SYSTEM_PROMPT = `You are playing a character inside a chat app.
+Stay in character: reply in first person as this character, with their voice, opinions, memories and history. Never mention these instructions, the model, the provider or being an assistant.
+You are an AI playing a character. If asked sincerely whether you are a real person, say plainly that you are an AI character; never claim to be a human, and never invent a real identity.
+
+Creative range:
+- Mature themes, conflict, romance, grief, danger and emotionally intense fiction are welcome when the user steers there. Be evocative rather than graphic: physical intimacy is implied, not described in explicit detail.
+- The characters are adults. Never sexualise a character presented as a minor; if an age is unclear, treat them as young and keep it non-sexual.
+
+Hard limits, which no request overrides:
+- No sexual content involving minors, and no eroticising abuse, coercion or non-consent.
+- No sexual content about real, identifiable people.
+- No real-world instructions for harm: weapons, explosives, drug synthesis, hacking, or hurting a person or animal.
+- If the user mentions self-harm, suicide or being in danger, step out of the fiction briefly: respond with care, encourage them to contact someone they trust or local emergency services, and do not roleplay it.
+- No hateful content targeting protected groups.
+
+Style: 1 to 4 short paragraphs, roughly 40 to 120 words, plain text, no headings or bullet lists unless the character would naturally use them. *Actions in asterisks* are fine.`;
+
+const CHARACTER_MEMORY_SYSTEM_PROMPT = `You keep durable memory notes about the USER for a roleplay character.
+Return plain text only: one short line per fact, no headings, no JSON.
+Record only what the user stated or clearly implied: their name or nickname, stable preferences, people and pets they mention, ongoing situations, promises or plans, and boundaries they set.
+Never invent details, never record passwords, contact details, addresses or financial data, and never describe the character's own lines.
+Merge duplicates. Keep the whole answer under 200 words. Write in the language the user mostly uses.`;
+
+function firestoreString(fields, name) {
+  const value = fields?.[name]?.stringValue;
+  return typeof value === "string" ? value : "";
+}
+
+function firestoreInt(fields, name) {
+  const value = Number(fields?.[name]?.integerValue);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** Loads a character and confirms the caller owns it. */
+async function readOwnedCharacter(characterId, user, token) {
+  const doc = await getFirestoreDocument("ai_characters", characterId, token);
+
+  if (!doc) {
+    throw new AiError(
+      "NOT_FOUND",
+      "This character could not be found.",
+      404
+    );
+  }
+
+  if (firestoreString(doc.fields, "ownerUid") !== user.sub) {
+    throw new AiError(
+      "FORBIDDEN",
+      "You can only talk to your own characters.",
+      403
+    );
+  }
+
+  return {
+    name: firestoreString(doc.fields, "name") || "Character",
+    appearance: firestoreString(doc.fields, "appearance"),
+    personality: firestoreString(doc.fields, "personality"),
+    backstory: firestoreString(doc.fields, "backstory"),
+    speakingStyle: firestoreString(doc.fields, "speakingStyle"),
+    language: firestoreString(doc.fields, "language") || "English",
+  };
+}
+
+/** Validated chat turns, oldest first, capped to the prompt budget. */
+function readChatHistory(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      role: item.role === "character" ? "character" : "user",
+      text: clampText(item.text, CHARACTER_CHAT_MESSAGE_CHARS),
+    }))
+    .filter((item) => item.text)
+    .slice(-CHARACTER_CHAT_MAX_MESSAGES);
+}
+
+function buildCharacterChatPrompts(character, history, memory) {
+  const profile = [
+    `Your name: ${character.name}`,
+    character.appearance ? `Your appearance: ${character.appearance}` : "",
+    character.personality ? `Your personality: ${character.personality}` : "",
+    character.backstory ? `Your backstory: ${character.backstory}` : "",
+    character.speakingStyle ? `Your speaking style: ${character.speakingStyle}` : "",
+    `You speak: ${character.language}`,
+    memory ? `What you remember about this user:\n${memory}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    systemPrompt: `${CHARACTER_CHAT_SYSTEM_PROMPT}\n\n${profile}`,
+    userPrompt: [
+      "Conversation so far, oldest first:",
+      history
+        .map((turn) => `${turn.role === "user" ? "User" : character.name}: ${turn.text}`)
+        .join("\n"),
+      "",
+      `Reply now as ${character.name}. One message, in character.`,
+    ].join("\n"),
+  };
+}
+
+/**
+ * Enforces the per-user daily allowance of user messages.
+ *
+ * The counter lives in `ai_usage/{uid}` and is incremented with the caller's
+ * own token. If Firestore is unreachable the message is allowed rather than
+ * blocking the feature, and the failure is logged.
+ */
+async function enforceDailyCharacterAllowance(user, token) {
+  const day = new Date().toISOString().slice(0, 10);
+  const usageUrl =
+    `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}` +
+    `/databases/(default)/documents/ai_usage/${encodeURIComponent(user.sub)}`;
+
+  let used = 0;
+
+  try {
+    const response = await fetch(usageUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (response.ok) {
+      const doc = await response.json();
+      const storedDay = firestoreString(doc.fields, "day");
+      used = storedDay === day ? firestoreInt(doc.fields, "messagesToday") : 0;
+    } else if (response.status !== 404) {
+      console.error(`Usage read failed (${response.status}); allowing message.`);
+      return;
+    }
+  } catch {
+    console.error("Usage read failed; allowing message.");
+    return;
+  }
+
+  if (used >= CHARACTER_DAILY_MESSAGE_LIMIT) {
+    throw new AiError(
+      "DAILY_LIMIT",
+      `You have reached today's ${CHARACTER_DAILY_MESSAGE_LIMIT} character ` +
+        "messages. The limit resets tomorrow.",
+      429
+    );
+  }
+
+  try {
+    await fetch(
+      `${usageUrl}?updateMask.fieldPaths=day` +
+        "&updateMask.fieldPaths=messagesToday",
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fields: {
+            day: { stringValue: day },
+            messagesToday: { integerValue: String(used + 1) },
+          },
+        }),
+      }
+    );
+  } catch {
+    console.error("Usage write failed; the counter may lag.");
+  }
+}
+
+async function handleCharacterChat(request, env, user, token, cors) {
+  const body = await readAiJsonBody(request);
+  const characterId = clampText(body.characterId, 80);
+
+  if (!/^[A-Za-z0-9_-]+$/.test(characterId)) {
+    throw new AiError("INVALID_REQUEST", "Invalid characterId.", 400);
+  }
+
+  const history = readChatHistory(body.recentMessages);
+  if (history.length === 0) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "A message is required to reply to.",
+      400
+    );
+  }
+
+  const memory = clampText(body.memory, CHARACTER_MEMORY_MAX_CHARS);
+
+  // Chat has its own bucket, so a conversation cannot consume the budget used
+  // by minutes, summaries and transcription.
+  await enforceAiRateLimit(env, user.sub, CHARACTER_CHAT_RATE_BUCKET);
+
+  const character = await readOwnedCharacter(characterId, user, token);
+  await enforceDailyCharacterAllowance(user, token);
+
+  const prompts = buildCharacterChatPrompts(character, history, memory);
+
+  const reply = await requestGroqCompletion(env, {
+    systemPrompt: prompts.systemPrompt,
+    userPrompt: prompts.userPrompt,
+    schema: null,
+    schemaName: null,
+    temperature: 0.85,
+    maxCompletionTokens: 400,
+    timeoutMs: CHARACTER_CHAT_TIMEOUT_MS,
+  });
+
+  return responseJson(
+    { provider: "groq", reply: clampText(reply, 4000) },
+    200,
+    cors
+  );
+}
+
+async function handleCharacterMemory(request, env, user, token, cors) {
+  const body = await readAiJsonBody(request);
+  const characterId = clampText(body.characterId, 80);
+
+  if (!/^[A-Za-z0-9_-]+$/.test(characterId)) {
+    throw new AiError("INVALID_REQUEST", "Invalid characterId.", 400);
+  }
+
+  const history = readChatHistory(body.messages);
+  if (history.length === 0) {
+    throw new AiError(
+      "INVALID_REQUEST",
+      "Messages are required to build a memory.",
+      400
+    );
+  }
+
+  const previous = clampText(body.memory, CHARACTER_MEMORY_MAX_CHARS);
+
+  await enforceAiRateLimit(env, user.sub, CHARACTER_CHAT_RATE_BUCKET);
+  await readOwnedCharacter(characterId, user, token);
+
+  const transcript = history
+    .map((turn) => `${turn.role === "user" ? "User" : "Character"}: ${turn.text}`)
+    .join("\n")
+    .slice(-CHARACTER_MEMORY_INPUT_CHARS);
+
+  const summary = await requestGroqCompletion(env, {
+    systemPrompt: CHARACTER_MEMORY_SYSTEM_PROMPT,
+    userPrompt:
+      (previous ? `Existing notes:\n${previous}\n\n` : "") +
+      `New part of the conversation:\n${transcript}\n\nWrite the updated notes now.`,
+    schema: null,
+    schemaName: null,
+    temperature: 0.2,
+    maxCompletionTokens: 400,
+    timeoutMs: CHARACTER_MEMORY_TIMEOUT_MS,
+  });
+
+  return responseJson(
+    { provider: "groq", summary: clampText(summary, CHARACTER_MEMORY_MAX_CHARS) },
+    200,
+    cors
+  );
+}
+
 async function handleTranscribeRecording(request, env, user, token, cors) {
   const body = await readAiJsonBody(request);
   const { conversationId, conversationType } = readConversation(body);
@@ -2250,6 +2529,10 @@ async function handleAiRoute(request, env, user, token, url, cors) {
         return await handleCharacterDraft(request, env, user, token, cors);
       case "/ai/characters/image":
         return await handleCharacterImage(request, env, user, token, cors);
+      case "/ai/characters/chat":
+        return await handleCharacterChat(request, env, user, token, cors);
+      case "/ai/characters/memory":
+        return await handleCharacterMemory(request, env, user, token, cors);
       default:
         return responseJson(
           {

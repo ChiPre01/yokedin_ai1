@@ -17,7 +17,14 @@ class CharacterAiException implements Exception {
   final String message;
   final bool isNotConfigured;
 
-  const CharacterAiException(this.message, {this.isNotConfigured = false});
+  /// The user spent today's message allowance; retrying now cannot help.
+  final bool isDailyLimit;
+
+  const CharacterAiException(
+    this.message, {
+    this.isNotConfigured = false,
+    this.isDailyLimit = false,
+  });
 
   @override
   String toString() => message;
@@ -79,6 +86,51 @@ class CharacterAiService {
       },
       AIConfig.characterImageTimeout,
     );
+  }
+
+  /// One chat turn: the user's own recent messages plus the character's stored
+  /// memory. The character profile is read by the Worker, never sent from here.
+  Future<String> sendCharacterMessage({
+    required String characterId,
+    required List<Map<String, String>> recentMessages,
+    String memory = '',
+  }) async {
+    final result = await _invoke(
+      AIConfig.characterChatPath,
+      {
+        'characterId': characterId,
+        'recentMessages': recentMessages,
+        if (memory.trim().isNotEmpty) 'memory': memory.trim(),
+      },
+      AIConfig.characterChatTimeout,
+    );
+
+    final reply = (result['reply'] ?? '').toString().trim();
+    if (reply.isEmpty) {
+      throw const CharacterAiException(
+        'The character did not answer. Please try again.',
+      );
+    }
+    return reply;
+  }
+
+  /// Folds older turns into the stored memory summary.
+  Future<String> summarizeCharacterMemory({
+    required String characterId,
+    required List<Map<String, String>> messages,
+    String memory = '',
+  }) async {
+    final result = await _invoke(
+      AIConfig.characterMemoryPath,
+      {
+        'characterId': characterId,
+        'messages': messages,
+        if (memory.trim().isNotEmpty) 'memory': memory.trim(),
+      },
+      AIConfig.characterChatTimeout,
+    );
+
+    return (result['summary'] ?? '').toString().trim();
   }
 
   Future<Map<String, dynamic>> _invoke(
@@ -194,6 +246,7 @@ class CharacterAiService {
     throw CharacterAiException(
       message,
       isNotConfigured: code == 'AI_NOT_CONFIGURED',
+      isDailyLimit: code == 'DAILY_LIMIT',
     );
   }
 

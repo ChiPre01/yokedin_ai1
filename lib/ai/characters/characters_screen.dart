@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yoked_in/ai/characters/character_model.dart';
 import 'package:yoked_in/ai/characters/character_detail_screen.dart';
 import 'package:yoked_in/ai/characters/characters_service.dart';
+import 'package:yoked_in/ai/characters/chat/character_chat_list_screen.dart';
 import 'package:yoked_in/ai/characters/create_character_screen.dart';
 import 'package:yoked_in/helper/navigation_helper.dart';
 import 'package:yoked_in/widgets/cloudflare_media_image.dart';
@@ -25,6 +26,16 @@ class CharactersScreen extends ConsumerWidget {
           style: TextStyle(fontWeight: FontWeight.w600, color: Colors.black87),
         ),
         iconTheme: const IconThemeData(color: Colors.black87),
+        actions: [
+          IconButton(
+            tooltip: 'Conversations',
+            icon: const Icon(Icons.forum_outlined),
+            onPressed: () => NavigationHelper.push(
+              context,
+              const CharacterChatListScreen(),
+            ),
+          ),
+        ],
       ),
       body: characters.when(
         loading: () => const Center(child: CircularProgressIndicator()),

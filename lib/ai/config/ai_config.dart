@@ -24,6 +24,21 @@ class AIConfig {
   /// AI Universe character endpoints.
   static const String characterDraftPath = "/ai/characters/draft";
   static const String characterImagePath = "/ai/characters/image";
+  static const String characterChatPath = "/ai/characters/chat";
+  static const String characterMemoryPath = "/ai/characters/memory";
+
+  /// Chat sends the user's message, so it gets its own per-minute bucket on
+  /// the Worker instead of sharing the one used by minutes and summaries.
+  static const Duration characterChatTimeout = Duration(seconds: 45);
+
+  /// User messages a character chat may send per day.
+  /// Must match CHARACTER_DAILY_MESSAGE_LIMIT in the Worker.
+  static const int dailyCharacterMessageLimit = 100;
+
+  /// How many recent turns a reply is built from, and when older turns are
+  /// folded into the stored memory summary.
+  static const int characterChatHistoryLimit = 20;
+  static const int characterMemoryBatchSize = 20;
 
   /// Provider label used in AI copy.
   static const String aiProviderName = "Groq AI";

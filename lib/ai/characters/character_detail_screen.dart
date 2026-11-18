@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:yoked_in/ai/characters/calls/character_video_call_screen.dart';
+import 'package:yoked_in/ai/characters/calls/character_voice_call_screen.dart';
 import 'package:yoked_in/ai/characters/character_ai_service.dart';
 import 'package:yoked_in/ai/characters/character_model.dart';
 import 'package:yoked_in/ai/characters/characters_service.dart';
+import 'package:yoked_in/ai/characters/chat/character_chat_screen.dart';
+import 'package:yoked_in/ai/characters/chat/character_chat_service.dart';
+import 'package:yoked_in/helper/navigation_helper.dart';
 import 'package:yoked_in/services/cloudflare_media_service.dart';
 import 'package:yoked_in/widgets/cloudflare_media_image.dart';
 
 /// One character: its portrait, identity, and the actions that keep it alive
-/// (regenerate the portrait, delete it).
-///
-/// Character chat lands here in the next phase; the entry point is deliberately
-/// absent rather than a button that does nothing.
+/// (chat, regenerate the portrait, delete it).
 class CharacterDetailScreen extends ConsumerStatefulWidget {
   const CharacterDetailScreen({super.key, required this.characterId});
 
@@ -126,6 +128,10 @@ class _CharacterDetailScreenState extends ConsumerState<CharacterDetailScreen> {
         }
       }
 
+      // Conversations and their messages belong to this character alone, so
+      // they go with it instead of being orphaned in Firestore.
+      await CharacterChatService().deleteForCharacter(character.id);
+
       await ref
           .read(charactersServiceProvider)
           .deleteCharacter(character.id);
@@ -236,6 +242,48 @@ class _CharacterDetailScreenState extends ConsumerState<CharacterDetailScreen> {
           ),
           const SizedBox(height: 12),
         ],
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => NavigationHelper.push(
+              context,
+              CharacterChatScreen(characterId: character.id),
+            ),
+            icon: const Icon(Icons.forum_outlined, size: 18),
+            label: Text(
+              character.name.isEmpty
+                  ? 'Chat'
+                  : 'Chat with ${character.name}',
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => NavigationHelper.push(
+                  context,
+                  CharacterVoiceCallScreen(characterId: character.id),
+                ),
+                icon: const Icon(Icons.call_outlined, size: 18),
+                label: const Text('Voice Call'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => NavigationHelper.push(
+                  context,
+                  CharacterVideoCallScreen(characterId: character.id),
+                ),
+                icon: const Icon(Icons.videocam_outlined, size: 18),
+                label: const Text('Video Call'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
